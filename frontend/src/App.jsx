@@ -48,52 +48,96 @@ const INTERRUPT_TITLES = {
   user_review_chapter: '中断点 B · 章节审阅',
 }
 
+/* 节点名 -> 人话 + 流水线步骤(用于进度条) */
+const STAGE_LABELS = {
+  coauthor: '共创世界观', init_characters: '设计角色', persist_characters: '角色入库',
+  gen_master_outline: '撰写总大纲', review_master_outline: '评审总大纲',
+  confirm_master_outline: '等你确认大纲', next_chapter: '准备章节',
+  stage_outline: '展开阶段细纲', review_stage_outline: '评审细纲',
+  confirm_stage_outline: '等你确认细纲', chapter_slice: '切分本章要点',
+  build_context: '检索记忆上下文', write_draft: '撰写正文',
+  review_draft_outline: '大纲一致性评审', review_quality: '质量审校',
+  merge_reviews: '汇总裁决', user_review_chapter: '等你审阅章节',
+  event_extract: '抽取事实入库', update_characters: '更新角色卡',
+  summary: '生成章摘要', finalize: '定稿落库',
+}
+const PIPELINE = [
+  'coauthor', 'gen_master_outline', 'stage_outline', 'write_draft',
+  'merge_reviews', 'user_review_chapter', 'finalize',
+]
+const PIPELINE_LABELS = {
+  coauthor: '共创', gen_master_outline: '大纲', stage_outline: '细纲',
+  write_draft: '写作', merge_reviews: '评审', user_review_chapter: '审阅', 'finalize': '定稿',
+}
+
 function Console({ storyId }) {
   const [running, setRunning] = useState(false)
-  const [stages, setStages] = useState([])
+  const [stages, setStages] = useState([])       // [{node, t}]
   const [draft, setDraft] = useState('')
   const [intr, setIntr] = useState(null)
   const [feedback, setFeedback] = useState('')
-  const [picked, setPicked] = useState([])      // 勾选确认的伏笔
+  const [picked, setPicked] = useState([])       // 勾选确认的伏笔
   const [msg, setMsg] = useState('')
   const [initialInput, setInitialInput] = useState('')
   const [chapters, setChapters] = useState(1)
+  const [elapsed, setElapsed] = useState(0)
+  const [tokenCount, setTokenCount] = useState(0)
   const draftRef = useRef(null)
 
   useEffect(() => { draftRef.current?.scrollTo(0, draftRef.current.scrollHeight) }, [draft])
 
+  // 运行计时器:一秒一跳,证明前端活着
+  useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(t)
+  }, [running])
+
   const onEvent = (kind, data) => {
-    if (kind === 'stage') setStages(s => [...s, data.node])
-    else if (kind === 'token') setDraft(d => d + (data.text || ''))
-    else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)) }
+    if (kind === 'stage') setStages(s => [...s, { node: data.node, t: Date.now() }])
+    else if (kind === 'token') { setDraft(d => d + (data.text || '')); setTokenCount(c => c + 1) }
+    else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)); setRunning(false) }
     else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成'); }
     else if (kind === 'error') { setMsg('错误:' + (data.message || '')); setRunning(false) }
   }
-  const finish = () => setRunning(false)
 
   const start = async () => {
     setRunning(true); setStages([]); setDraft(''); setIntr(null); setMsg('')
+    setElapsed(0); setTokenCount(0)
     try {
       await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput }, onEvent)
     } catch (e) { setMsg('错误:' + e.message) }
-    finish()
+    setRunning(false)
   }
 
   const send = async (action) => {
     if (!intr) return
-    setRunning(true); setMsg('')
+    setRunning(true); setMsg(''); setElapsed(0)
+    if (action === 'revise') { setDraft(''); setTokenCount(0) }
     const payload = {
       action,
       feedback: action === 'revise' ? feedback : '',
       threads: (intr.thread_changes || []).filter((_, i) => picked.includes(i)),
     }
     setIntr(null); setFeedback('')
-    if (action === 'revise') setDraft('')
     try {
       await api.resume(storyId, payload, onEvent)
     } catch (e) { setMsg('错误:' + e.message) }
-    finish()
+    setRunning(false)
   }
+
+  const lastStage = stages.length ? stages[stages.length - 1].node : ''
+  const curLabel = running
+    ? (STAGE_LABELS[lastStage] || lastStage || '启动中') + '…'
+    : (intr ? '等你操作' : (msg || '空闲'))
+  // 流水线进度:当前所处步骤(最后一个命中 PIPELINE 的阶段)
+  const curPipeIdx = (() => {
+    let idx = -1
+    for (const s of stages) { const i = PIPELINE.indexOf(s.node); if (i > idx) idx = i }
+    return idx
+  })()
+
+  const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   return (
     <div>
@@ -112,10 +156,41 @@ function Console({ storyId }) {
           </button>
           {msg && <span className="muted">{msg}</span>}
         </div>
+
+        {/* 运行状态条:状态灯 + 当前阶段 + 计时 */}
+        {(running || intr) && (
+          <div className={'run-status ' + (running ? 'is-running' : 'is-waiting')}>
+            <span className="dot" />
+            <b>{curLabel}</b>
+            <span className="muted" style={{ marginLeft: 'auto' }}>
+              已耗时 {fmt(elapsed)}
+              {tokenCount > 0 && ` · 已写出 ${draft.length} 字`}
+            </span>
+          </div>
+        )}
+
+        {/* 流水线步骤 */}
+        {(running || intr || stages.length > 0) && (
+          <div className="pipe">
+            {PIPELINE.map((p, i) => (
+              <div key={p} className={'pipe-step ' + (i < curPipeIdx ? 'done' : i === curPipeIdx ? 'cur' : '')}>
+                <span className="pipe-idx">{i < curPipeIdx ? '✓' : i + 1}</span>
+                {PIPELINE_LABELS[p]}
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="stage-log" style={{ marginTop: 10 }}>
-          {stages.slice(-8).map((s, i, a) => (
-            <div key={i} className={i === a.length - 1 ? 'cur' : ''}>▸ {s}</div>
+          {stages.slice(-10).map((s, i, a) => (
+            <div key={i} className={i === a.length - 1 ? 'cur' : ''}>
+              ▸ {STAGE_LABELS[s.node] || s.node}
+              <span className="muted" style={{ marginLeft: 6 }}>
+                {new Date(s.t).toLocaleTimeString('zh-CN', { hour12: false })}
+              </span>
+            </div>
           ))}
+          {running && <div className="cur">▸ 正在调用模型(长文生成需 1-3 分钟,计时器在走即正常)…</div>}
         </div>
       </div>
 
