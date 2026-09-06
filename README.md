@@ -47,7 +47,7 @@ cd frontend && npm install && npm run dev
 ## 测试与评测
 
 ```bash
-pytest                          # 51 项测试(记忆/权限/版本链/图端到端/API)
+pytest                          # 47 项测试(记忆/权限/版本链/图端到端/API)
 lint-imports                    # 分层架构契约(机械化守护)
 
 python -m evals.run_memory_eval         # P2.5:记忆层基线对比(零 token)
