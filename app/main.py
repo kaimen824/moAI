@@ -103,10 +103,11 @@ def _extract_payload(update: dict | None) -> dict:
 
 
 def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
-    """worker 线程跑图,事件经 deps 广播(多订阅+历史);本响应为主订阅。"""
+    """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。"""
     deps, _ = engine()
-    deps.clear_events()                 # 新一轮生成:历史从零
-    q = deps.subscribe()
+    deps.clear_events(thread_id)        # 新一轮生成:该 thread 历史从零
+    q = deps.subscribe(thread_id)
+    deps._current_thread = thread_id    # 节点内 emit(token)归属本 thread
     cfg = {"configurable": {"thread_id": thread_id}}
     _active.add(thread_id)
 
@@ -118,12 +119,12 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
                 for node, update in chunk.items():
                     if node == "__interrupt__":
                         intr = update[0]
-                        deps.emit("interrupt", intr.value)
+                        deps.emit("interrupt", intr.value, thread_id)
                         return
-                    deps.emit("stage", {"node": node, "payload": _extract_payload(update)})
-            deps.emit("done", {"ok": True})
+                    deps.emit("stage", {"node": node, "payload": _extract_payload(update)}, thread_id)
+            deps.emit("done", {"ok": True}, thread_id)
         except Exception as exc:  # noqa: BLE001
-            deps.emit("error", {"message": str(exc)})
+            deps.emit("error", {"message": str(exc)}, thread_id)
         finally:
             _active.discard(thread_id)
 
@@ -150,24 +151,22 @@ def _sse_response(deps, q) -> StreamingResponse:
 def run_state(story_id: str):
     """会话恢复:前端挂载时查询 —— 运行中 / 等待中断(含中断卡数据)/ 空闲 + 事件历史。"""
     deps, _ = engine()
-    history = [
-        {"kind": k, "data": d} for k, d in deps.snapshot()
-    ]
+    events = [{"kind": k, "data": d} for k, d in deps.snapshot(story_id)]
     last_interrupt = None
-    for k, d in reversed(deps.snapshot()):
+    for k, d in reversed(deps.snapshot(story_id)):
         if k == "interrupt":
             last_interrupt = d
             break
     status = "running" if story_id in _active else (
         "waiting" if last_interrupt else "idle")
-    return {"status": status, "interrupt": last_interrupt, "events": history}
+    return {"status": status, "interrupt": last_interrupt, "events": events}
 
 
 @app.post("/stories/{story_id}/attach")
 def attach(story_id: str):
     """断线/刷新后重新订阅事件流(只收不发,不驱动图)。"""
     deps, _ = engine()
-    return _sse_response(deps, deps.subscribe())
+    return _sse_response(deps, deps.subscribe(story_id))
 
 
 # ================= 路由 =================

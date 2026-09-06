@@ -52,7 +52,7 @@ class WriterNode(BaseAgent):
         )
         user = render_context(state)
         # SSE 监听时逐 token 流式;否则一次性
-        if deps._subscribers:
+        if any(t == deps._current_thread for t, _q in deps._subscribers):
             chunks: list[str] = []
             for token in self.llm.stream(
                 self.role,

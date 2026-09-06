@@ -38,50 +38,46 @@ class Deps:
     repo: Repository
     retrieval: RetrievalService
     llm: LLMFacade
-    # SSE 事件总线:广播式多订阅 + 历史留存(刷新/断线后前端可恢复流程)
-    _subscribers: list = field(default_factory=list)
-    _history: list = field(default_factory=list)      # [(kind, data)] 最近 1000 条(含 token)
+    # SSE 事件总线:按 story(thread)隔离的广播 + 历史(刷新/断线后前端可恢复流程)
+    _subscribers: list = field(default_factory=list)   # [(thread_id, queue)]
+    _history: list = field(default_factory=list)       # [(kind, data, thread_id)] 全局环形,按 thread 过滤
+    _current_thread: str = ""                          # 单任务串行约束下的当前运行 thread
     # 引擎级可重入互斥:全部 DB 访问(repo 方法 / usage sink / checkpointer / 端点)
     # 各自持锁做短临界区。不全程锁图执行——LangGraph fan-out 节点跑在独立线程。
     run_lock: threading.RLock = field(default_factory=threading.RLock)
     checkpointer: object = None
 
-    def emit(self, kind: str, data: dict) -> None:
-        """广播事件到所有订阅者,并留存历史(刷新后可重放)。"""
-        self._history.append((kind, data))
-        if len(self._history) > 1000:
-            del self._history[: len(self._history) - 1000]
-        for q in list(self._subscribers):
-            try:
-                q.put((kind, data))
-            except Exception:
-                pass
+    def emit(self, kind: str, data: dict, thread_id: str | None = None) -> None:
+        """广播事件(按 thread 订阅者)并留存历史。节点内调用走 _current_thread。"""
+        tid = thread_id or self._current_thread
+        self._history.append((kind, data, tid))
+        if len(self._history) > 2000:
+            del self._history[: len(self._history) - 2000]
+        for sub_tid, q in list(self._subscribers):
+            if sub_tid == tid:
+                try:
+                    q.put((kind, data))
+                except Exception:
+                    pass
 
-    def subscribe(self):
-        """新增订阅者:先喂历史(重放),再接收后续事件。"""
+    def subscribe(self, thread_id: str):
+        """新增订阅者:先重放该 thread 历史,再接收后续事件。"""
         q: queue.Queue = queue.Queue()
-        for item in self._history:
-            q.put(item)
-        self._subscribers.append(q)
+        for k, d, tid in self._history:
+            if tid == thread_id:
+                q.put((k, d))
+        self._subscribers.append((thread_id, q))
         return q
 
     def unsubscribe(self, q) -> None:
-        if q in self._subscribers:
-            self._subscribers.remove(q)
+        self._subscribers = [(t, x) for t, x in self._subscribers if x is not q]
 
-    def snapshot(self) -> list:
-        return list(self._history)
+    def snapshot(self, thread_id: str) -> list:
+        return [(k, d) for k, d, tid in self._history if tid == thread_id]
 
-    def clear_events(self) -> None:
-        self._history.clear()
-        self._subscribers.clear()
-
-    def set_event_queue(self, q) -> None:
-        """兼容旧接口:单订阅(现在经 subscribe)。"""
-        if q is None:
-            self._subscribers.clear()
-        else:
-            self._subscribers.append(q)
+    def clear_events(self, thread_id: str) -> None:
+        self._history = [(k, d, t) for k, d, t in self._history if t != thread_id]
+        self._subscribers = [(t, q) for t, q in self._subscribers if t != thread_id]
 
     # ---- 用户指令通道(任意时刻输入,生成时消费)----
     def record_directive(self, story_id: str, content: str) -> str:
