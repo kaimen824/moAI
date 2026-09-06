@@ -9,7 +9,7 @@ function Library({ onOpen }) {
   const [premise, setPremise] = useState('')
 
   const refresh = () => api.listStories().then(setStories).catch(() => {})
-  useEffect(refresh, [])
+  useEffect(() => { refresh() }, [])
 
   const create = async () => {
     if (!title.trim()) return
@@ -176,7 +176,7 @@ function Reader({ storyId }) {
   const [detail, setDetail] = useState(null)
   const [current, setCurrent] = useState(null)
   const refresh = () => api.storyDetail(storyId).then(setDetail).catch(() => {})
-  useEffect(refush => refresh(), [storyId])
+  useEffect(() => { refresh() }, [storyId])
 
   const open = async (no) => {
     const ch = await api.chapter(storyId, no)
@@ -218,7 +218,7 @@ function Reader({ storyId }) {
 function FactQueue() {
   const [facts, setFacts] = useState([])
   const refresh = () => api.pendingFacts().then(setFacts).catch(() => {})
-  useEffect(refresh, [])
+  useEffect(() => { refresh() }, [])
   const review = async (fid, ok) => { await api.reviewFact(fid, ok); refresh() }
 
   return (
