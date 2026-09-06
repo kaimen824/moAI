@@ -40,17 +40,18 @@ class Deps:
     llm: LLMFacade
     # SSE 事件总线:写作 token 流等(单任务串行约束下,一次仅一个活跃队列)
     _event_queue: "queue.Queue | None" = None
-    # 引擎级互斥:sqlite3 连接(check_same_thread=False)非线程安全,
-    # 图执行线程 / API 线程 / SSE 线程的所有 DB 访问经此锁串行化(单任务串行约束)
-    run_lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def set_event_queue(self, q) -> None:
-        self._event_queue = q
+    # 引擎级可重入互斥:全部 DB 访问(repo 方法 / usage sink / checkpointer / 端点)
+    # 各自持锁做短临界区。不全程锁图执行——LangGraph fan-out 节点跑在独立线程。
+    run_lock: threading.RLock = field(default_factory=threading.RLock)
+    checkpointer: object = None
 
     def emit(self, kind: str, data: dict) -> None:
         """节点发事件(stage/token/...);无监听时静默。"""
         if self._event_queue is not None:
             self._event_queue.put((kind, data))
+
+    def set_event_queue(self, q) -> None:
+        self._event_queue = q
 
     # ---- 节点辅助 ----
     def supervisor_ctx(self, story_id: str) -> AgentContext:
@@ -98,17 +99,18 @@ class Deps:
         return ids
 
     def log_review(self, state: dict, *, reviewer: str, verdict: dict, round_no: int) -> None:
-        self.conn.execute(
-            "INSERT INTO review_results (id, story_id, chapter_no, round_no, reviewer,"
-            " verdict, scores, feedback, forced_pass, created_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (uuid.uuid4().hex, state.get("story_id", ""), state.get("chapter_no"),
-             round_no, reviewer, verdict.get("verdict", "revise"),
-             json.dumps(verdict.get("scores", {}), ensure_ascii=False),
-             verdict.get("feedback", ""),
-             1 if state.get("forced_pass") else 0, _now()),
-        )
-        self.conn.commit()
+        with self.run_lock:
+            self.conn.execute(
+                "INSERT INTO review_results (id, story_id, chapter_no, round_no, reviewer,"
+                " verdict, scores, feedback, forced_pass, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, state.get("story_id", ""), state.get("chapter_no"),
+                 round_no, reviewer, verdict.get("verdict", "revise"),
+                 json.dumps(verdict.get("scores", {}), ensure_ascii=False),
+                 verdict.get("feedback", ""),
+                 1 if state.get("forced_pass") else 0, _now()),
+            )
+            self.conn.commit()
 
     # ---- 定稿:编排原子性落库(单事务,ADR-0003 写链路)----
     def commit_finalize(self, state: dict) -> str:
@@ -120,6 +122,7 @@ class Deps:
         changes = state.get("fact_changes", {})
         chapter_id = uuid.uuid4().hex
         try:
+            self.run_lock.acquire()   # 显式事务:跨越整个 BEGIN..COMMIT 的临界区
             self.conn.execute("BEGIN")
             # 1) 章节(active)
             self.conn.execute(
@@ -206,15 +209,28 @@ class Deps:
         except Exception:
             self.conn.rollback()
             raise
+        finally:
+            self.run_lock.release()
         return chapter_id
 
 
 def build_engine(db_path: str | Path, llm: LLMFacade | None = None,
                  embed_fn=None) -> tuple[Deps, sqlite3.Connection]:
-    """组装引擎(生产入口;测试注入 fake llm/embed)。"""
+    """组装引擎(生产入口;测试注入 fake llm/embed)。
+
+    返回 (deps, conn);deps.checkpointer 已构建并与引擎锁绑定——
+    全部 DB 访问(repo 方法 / usage sink / checkpointer / API 端点)
+    共用 deps.run_lock 做短临界区互斥。
+    """
     conn = init_db(db_path)
-    repo = Repository(conn)
     facade = llm or LLMFacade()
-    facade.set_usage_sink(make_usage_sink(conn))
-    retrieval = RetrievalService(repo, embed_fn=embed_fn)
-    return Deps(conn=conn, repo=repo, retrieval=retrieval, llm=facade), conn
+    deps = Deps(conn=conn, repo=None, retrieval=None, llm=facade)   # type: ignore[arg-type]
+    repo = Repository(conn, lock=deps.run_lock)
+    deps.repo = repo
+    facade.set_usage_sink(make_usage_sink(conn, deps.run_lock))
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    saver = SqliteSaver(conn)
+    saver.lock = deps.run_lock          # saver 内部锁替换为引擎锁:与 repo/sink 互斥
+    deps.checkpointer = saver
+    deps.retrieval = RetrievalService(repo, embed_fn=embed_fn)
+    return deps, conn

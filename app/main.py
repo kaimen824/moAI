@@ -44,7 +44,7 @@ def engine() -> tuple[Deps, Any]:
     if _engine is None:
         deps, conn = build_engine(get_settings().db_path)
         _engine = (deps, conn)
-        _graph = build_graph(deps, checkpointer=SqliteSaver(conn))
+        _graph = build_graph(deps, checkpointer=deps.checkpointer)
     return _engine
 
 
@@ -88,16 +88,17 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
 
     def worker() -> None:
         try:
-            with deps.run_lock:      # DB 访问串行化(单任务约束)
-                for chunk in _graph.stream(graph_input, cfg, stream_mode="updates"):
-                    for node, update in chunk.items():
-                        if node == "__interrupt__":
-                            intr = update[0]
-                            q.put(("interrupt", intr.value))
-                            deps.set_event_queue(None)
-                            return
-                        q.put(("stage", {"node": node}))
-                q.put(("done", {"ok": True}))
+            # 不全程持锁:LangGraph fan-out 节点在独立线程,DB 访问
+            # 已在 repo/sink/checkpointer 层与引擎锁互斥
+            for chunk in _graph.stream(graph_input, cfg, stream_mode="updates"):
+                for node, update in chunk.items():
+                    if node == "__interrupt__":
+                        intr = update[0]
+                        q.put(("interrupt", intr.value))
+                        deps.set_event_queue(None)
+                        return
+                    q.put(("stage", {"node": node}))
+            q.put(("done", {"ok": True}))
         except Exception as exc:  # noqa: BLE001
             q.put(("error", {"message": str(exc)}))
         finally:

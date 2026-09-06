@@ -20,7 +20,7 @@ from app.graph.runtime import build_engine
 def client(tmp_path):
     facade = LLMFacade(response_override=replay.override)
     deps, conn = build_engine(tmp_path / "api.db", llm=facade)
-    main.install_engine(deps, conn, build_graph(deps, checkpointer=SqliteSaver(conn)))
+    main.install_engine(deps, conn, build_graph(deps, checkpointer=deps.checkpointer))
     with TestClient(main.app) as c:
         yield c, deps
     main._engine, main._graph = None, None

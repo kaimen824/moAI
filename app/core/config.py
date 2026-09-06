@@ -14,7 +14,9 @@ from threading import Lock
 
 
 def _load_dotenv(path: Path | None = None) -> None:
-    """极简 .env 加载(已设置的环境变量优先,不覆盖)。"""
+    """极简 .env 加载(已设置的环境变量优先,不覆盖)。测试隔离时置 NOVEL_NO_DOTENV=1 禁用。"""
+    if os.environ.get("NOVEL_NO_DOTENV"):
+        return
     env_file = path or Path(__file__).resolve().parents[2] / ".env"
     if not env_file.exists():
         return

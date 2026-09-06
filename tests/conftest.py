@@ -19,6 +19,7 @@ def db(tmp_path):
 @pytest.fixture(autouse=True)
 def isolated_settings(monkeypatch):
     """隔离环境变量与单例,防止宿主机 .env 泄入测试。"""
+    monkeypatch.setenv("NOVEL_NO_DOTENV", "1")   # 禁 .env 注入
     monkeypatch.delenv("GLM_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     monkeypatch.delenv("NOVEL_DB_PATH", raising=False)

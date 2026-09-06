@@ -61,8 +61,7 @@ def override(stage: str) -> LLMResponse | None:
 def engine(tmp_path):
     facade = LLMFacade(response_override=override)
     deps, conn = build_engine(tmp_path / "e2e.db", llm=facade)
-    saver = SqliteSaver(conn)
-    return build_graph(deps, checkpointer=saver), deps, conn
+    return build_graph(deps, checkpointer=deps.checkpointer), deps, conn
 
 
 def test_e2e_two_chapters_with_interrupts(engine):

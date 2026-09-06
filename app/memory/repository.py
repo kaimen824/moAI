@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
@@ -52,8 +53,26 @@ class AgentContext:
 
 
 class Repository:
-    def __init__(self, conn: sqlite3.Connection):
+    _LOCKED_METHODS = (
+        "check_access", "insert_facts", "insert_beliefs", "insert_visibility",
+        "upsert_character", "get_characters", "upsert_entity", "add_entity_links",
+        "get_linked_entities", "insert_chapter", "get_active_chapter",
+        "upsert_plot_thread", "get_plot_threads", "insert_summary",
+        "get_summaries", "create_story", "main_branch",
+    )
+
+    def __init__(self, conn: sqlite3.Connection, lock: "threading.RLock | None" = None):
         self.conn = conn
+        self._db_lock = lock or threading.RLock()
+        # 方法级加锁:每个 DB 访问为短临界区(图内 fan-out 节点线程安全)
+        for name in self._LOCKED_METHODS:
+            fn = getattr(self, name)
+
+            def locked(*a, _fn=fn, **kw):
+                with self._db_lock:
+                    return _fn(*a, **kw)
+
+            setattr(self, name, locked)
 
     # ================= ACL =================
     def check_access(self, ctx: AgentContext, domain: str, op: str) -> None:

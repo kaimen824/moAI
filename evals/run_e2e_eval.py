@@ -50,7 +50,7 @@ def run_scenario(db_path: Path, chapters: int, *, replay: bool,
         from app.core.config import AgentRole
         for role, model in model_overrides.items():
             deps.llm._settings.set_model_override(AgentRole(role), model)
-    graph = build_graph(deps, checkpointer=SqliteSaver(conn))
+    graph = build_graph(deps, checkpointer=deps.checkpointer)
 
     story_id, branch = deps.repo.create_story(f"评测-{db_path.stem}", "端到端评测")
     cfg = {"configurable": {"thread_id": db_path.stem}}

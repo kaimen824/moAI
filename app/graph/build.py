@@ -59,21 +59,22 @@ def confirm_master_outline(state: GraphState, deps: Deps) -> dict:
     })
     if decision.get("action") == "revise":
         return {"user_input": decision, "outline_confirmed": False}
-    deps.repo.conn.execute(
-        "UPDATE outlines SET status='archived' WHERE story_id=? AND status='confirmed'",
-        (state["story_id"],))
-    # 总大纲确认落库(主控写入,带审计;首版)
     import uuid
     from datetime import datetime, timezone
-    deps.conn.execute(
-        "INSERT OR REPLACE INTO outlines (id, story_id, version_no, content, status, created_at)"
-        " VALUES (?,?,?,?,?,?)",
-        (uuid.uuid4().hex, state["story_id"],
-         (deps.conn.execute("SELECT COUNT(*) c FROM outlines WHERE story_id=?",
-                            (state["story_id"],)).fetchone()["c"] + 1),
-         state["master_outline"], "confirmed",
-         datetime.now(timezone.utc).isoformat(timespec="seconds")))
-    deps.conn.commit()
+    with deps.run_lock:
+        deps.repo.conn.execute(
+            "UPDATE outlines SET status='archived' WHERE story_id=? AND status='confirmed'",
+            (state["story_id"],))
+        # 总大纲确认落库(主控写入,带审计;首版)
+        deps.conn.execute(
+            "INSERT OR REPLACE INTO outlines (id, story_id, version_no, content, status, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (uuid.uuid4().hex, state["story_id"],
+             (deps.conn.execute("SELECT COUNT(*) c FROM outlines WHERE story_id=?",
+                                (state["story_id"],)).fetchone()["c"] + 1),
+             state["master_outline"], "confirmed",
+             datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        deps.conn.commit()
     return {"user_input": decision, "outline_confirmed": True,
             "chapter_no": 1, "chapters_done": 0}
 
