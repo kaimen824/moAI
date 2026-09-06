@@ -27,10 +27,16 @@ class LLMFacade:
         settings: Settings | None = None,
         factory: ProviderFactory | None = None,
         usage_sink: UsageSink | None = None,
+        response_override: Callable[[str], LLMResponse | None] | None = None,
     ):
+        """response_override(stage) -> LLMResponse | None:命中则跳过真实调用。
+
+        用途:端到端测试回放、评测 dry-run(零 token 成本)。
+        """
         self._settings = settings or get_settings()
         self._factory = factory
         self._usage_sink = usage_sink
+        self._response_override = response_override
 
     # ---- 内部 ----
     def _get_factory(self) -> ProviderFactory:
@@ -65,6 +71,18 @@ class LLMFacade:
         route = ModelRouter(self._settings).route(role)
         trace_id = uuid.uuid4().hex[:16]
         started = time.perf_counter()
+        if self._response_override is not None:
+            resp = self._response_override(stage)
+            if resp is not None:
+                resp.model = route.model
+                self._emit_usage(
+                    UsageRecord(
+                        agent=role.value, model=route.model,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        trace_id=trace_id, stage=stage, story_id=story_id,
+                    )
+                )
+                return resp
         client = self._get_factory().chat_client(route.provider)
         resp = client.chat(
             route.model,

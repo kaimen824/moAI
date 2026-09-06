@@ -13,7 +13,10 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     """打开连接:WAL + 外键 + 行字典。每次新连接(单写者场景足够)。"""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    # check_same_thread=False:LangGraph 读写可能在 worker 线程;
+    # 安全前提 = 单写者 + 章节生成串行(实现期备忘的既有约束)
+    # isolation_level=None:autocommit——显式事务(定稿单事务)由调用方 BEGIN/COMMIT 管理
+    conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
