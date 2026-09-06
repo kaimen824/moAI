@@ -20,7 +20,7 @@ function TemplateChips({ onPick }) {
       {TEMPLATES.map(t => (
         <Tooltip key={t.tag} content={t.title}>
           <Button size="1" variant="soft" color="gray" style={{ cursor: 'pointer' }}
-            onClick={() => onPick(t.text)}>
+            onClick={() => onPick(t.tag)}>
             {t.tag}
           </Button>
         </Tooltip>
@@ -325,7 +325,7 @@ function Console({ storyId }) {
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   return (
-    <Flex direction="column" gap="4" style={{ width: '100%', maxWidth: 1100 }}>
+    <Flex direction="column" gap="4" style={{ width: '100%' }}>
       {/* 指令通道 */}
       <Card size="2">
         <Flex gap="3" align="center" wrap="wrap">
@@ -418,7 +418,7 @@ function Console({ storyId }) {
               <Badge color="gray" variant="soft">{draft.length} 字</Badge>
             </Flex>
             <Text as="div" size="3" ref={draftRef}
-              style={{ whiteSpace: 'pre-wrap', lineHeight: 2 }}>{draft}</Text>
+              style={{ whiteSpace: 'pre-wrap', lineHeight: 2, minHeight: 240 }}>{draft}</Text>
           </Flex>
         </Card>
       )}
@@ -747,7 +747,7 @@ export default function App() {
           </Text>
         )}
       </Flex>
-      <Flex p="5" style={{ flex: 1, minWidth: 0, alignItems: 'flex-start' }}>
+      <Flex p="3" style={{ flex: 1, minWidth: 0, alignItems: 'flex-start' }}>
         {tab === 'library' && <Library onOpen={id => { setStoryId(id); setTab('console') }} />}
         {tab === 'console' && (storyId
           ? <Console storyId={storyId} />
