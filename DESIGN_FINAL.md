@@ -237,13 +237,15 @@ retrieval_audit     检索审计(caller/query/返回条数/耗时)
 
 ## 6. 模型分级与接入层
 
-| 环节 | 档位 |
-|---|---|
-| 主控(细纲/裁决)、大纲 Agent、审校 Agent | 强模型 |
-| 写作 Agent | 强模型(默认,可配置降档做成本实验) |
-| 事件管理(事实抽取) | 中档 |
-| 角色管理、摘要生成 | 便宜模型 |
-| embedding | 独立配置 |
+| 环节 | 档位 | 当前配置(阿里云百炼聚合) |
+|---|---|---|
+| 主控(细纲/裁决)、大纲 Agent、审校 Agent | 强模型 | glm-5 |
+| 写作 Agent | 强模型(默认,可配置降档做成本实验) | glm-5 |
+| 事件管理(事实抽取) | 中档 | deepseek-v3 |
+| 角色管理、摘要生成 | 便宜模型 | deepseek-v3 |
+| embedding | 独立配置 | qwen3.7-text-embedding |
+
+**Provider 路由:key 可用性优先**——配了 `DASHSCOPE_API_KEY`(百炼)时一切模型(含 glm-5)走百炼聚合;无百炼 key 时 glm-* 才直连智谱。
 
 - 配置粒度 = 按 Agent:`MODEL__<AGENT_ROLE>` 环境变量;优先级 前端配置页 > 环境变量 > 默认值
 - **接入层三件套**:抽象工厂(provider 客户端族:chat + embedding)+ 策略路由(角色→模型)+ 装饰器(usage 埋点);Agent 唯一入口 `llm.chat(role=..., messages=...)`
