@@ -10,6 +10,24 @@ import {
 } from '@phosphor-icons/react'
 import { api } from './api.js'
 import Landing from './Landing.jsx'
+import { TEMPLATES } from './templates.js'
+
+/* 模板芯片:点选填入构想 */
+function TemplateChips({ onPick }) {
+  return (
+    <Flex gap="2" wrap="wrap" align="center">
+      <Text size="1" color="gray">找灵感:</Text>
+      {TEMPLATES.map(t => (
+        <Tooltip key={t.tag} content={t.title}>
+          <Button size="1" variant="soft" color="gray" style={{ cursor: 'pointer' }}
+            onClick={() => onPick(t.text)}>
+            {t.tag}
+          </Button>
+        </Tooltip>
+      ))}
+    </Flex>
+  )
+}
 
 /* ================= 书库 ================= */
 function Library({ onOpen }) {
@@ -332,8 +350,11 @@ function Console({ storyId }) {
           </Flex>
 
           {existingChapters === 0 && (
-            <TextArea size="2" rows="2" placeholder="世界观构想(共创起点):基调 / 核心冲突 / 角色构想……"
-              value={initialInput} onChange={e => setInitialInput(e.target.value)} />
+            <Flex direction="column" gap="2">
+              <TextArea size="2" rows="3" placeholder="世界观构想(共创起点):基调 / 核心冲突 / 角色构想……"
+                value={initialInput} onChange={e => setInitialInput(e.target.value)} />
+              <TemplateChips onPick={t => setInitialInput(t)} />
+            </Flex>
           )}
 
           <Flex gap="3" align="center" wrap="wrap">
