@@ -1,13 +1,14 @@
 """P1 验收:真实模型调用集成测试。
 
 DASHSCOPE_API_KEY(百炼,默认路由)或 GLM_API_KEY 任一可用即运行;均未设置时跳过。
+注意:本文件需要 .env 真实加载(绕过 conftest 的测试隔离)。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from app.core.config import AgentRole, get_settings
+from app.core.config import AgentRole, get_settings, reset_settings
 from app.core.llm.base import ChatMessage
 from app.core.llm.facade import LLMFacade
 
@@ -18,6 +19,18 @@ def _has_key() -> bool:
 
 
 pytestmark = pytest.mark.skipif(not _has_key(), reason="DASHSCOPE/GLM API key 未设置,跳过集成测试")
+
+
+@pytest.fixture(autouse=True)
+def restore_dotenv(monkeypatch):
+    """覆盖全局隔离:集成测试必须读到 .env 的真实 key。"""
+    import os
+
+    monkeypatch.delenv("NOVEL_NO_DOTENV", raising=False)
+    reset_settings()
+    get_settings()          # 重新加载 .env
+    yield
+    reset_settings()
 
 
 def test_glm_chat_real():

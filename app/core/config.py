@@ -44,16 +44,16 @@ class AgentRole(str, Enum):
 
 
 # 代码默认值(最低优先级);实际部署通过 .env / 环境变量 / 前端配置页覆盖
-# 默认走阿里云百炼(qwen 系);切换 GLM 只需 MODEL__* 环境变量覆盖
+# 全部经阿里云百炼(DashScope 聚合):强=glm-5,中/便宜=deepseek-v3,embedding=qwen3.7
 DEFAULT_MODELS: dict[AgentRole, str] = {
-    AgentRole.SUPERVISOR: "qwen-max",
-    AgentRole.OUTLINE: "qwen-max",
-    AgentRole.REVIEWER: "qwen-max",
-    AgentRole.WRITER: "qwen-max",
-    AgentRole.EVENT: "qwen-plus",
-    AgentRole.CHARACTER: "qwen-turbo",
-    AgentRole.SUMMARY: "qwen-turbo",
-    AgentRole.EMBEDDING: "text-embedding-v3",
+    AgentRole.SUPERVISOR: "glm-5",
+    AgentRole.OUTLINE: "glm-5",
+    AgentRole.REVIEWER: "glm-5",
+    AgentRole.WRITER: "glm-5",
+    AgentRole.EVENT: "deepseek-v3",
+    AgentRole.CHARACTER: "deepseek-v3",
+    AgentRole.SUMMARY: "deepseek-v3",
+    AgentRole.EMBEDDING: "qwen3.7-text-embedding",
 }
 
 DEFAULT_DB_PATH = Path("data") / "novel_agent.db"

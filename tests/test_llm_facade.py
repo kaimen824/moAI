@@ -68,7 +68,7 @@ def test_chat_emits_usage_to_sink(db, isolated_settings):
     assert resp.content
     row = db.execute("SELECT * FROM usage_log").fetchone()
     assert row["agent"] == "WRITER"
-    assert row["model"].startswith("qwen")
+    assert row["model"] == "glm-5"
     assert row["tokens_in"] == 10 and row["tokens_out"] == 5
     assert row["stage"] == "draft"
     assert row["latency_ms"] >= 0

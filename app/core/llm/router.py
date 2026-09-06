@@ -31,11 +31,10 @@ class Route:
 
 
 def resolve_provider(model: str) -> str:
-    # 智谱模型族:glm-* 系列 + embedding-*
-    if model.startswith("glm") or model.startswith("embedding-"):
-        return "glm"
-    # 阿里云百炼模型族:qwen-* 系列 + text-embedding-*
-    if model.startswith("qwen") or model.startswith("text-embedding-"):
+    """模型名前缀 -> provider(仅按名字猜;优先级低于 key 可用性判定,见 ModelRouter)。"""
+    # 阿里云百炼模型族:qwen-* / deepseek-* / glm-*(百炼聚合)/ *-text-embedding
+    if (model.startswith(("qwen", "deepseek", "embedding-", "text-embedding"))
+            or model.startswith("glm")):
         return "dashscope"
     return "openai"
 
@@ -47,8 +46,18 @@ class ModelRouter:
     def route(self, role: AgentRole | str) -> Route:
         role = AgentRole(role)
         model = self._settings.model_for(role)
+        # key 可用性优先于模型名前缀:百炼(DashScope)聚合了 glm/qwen/deepseek
+        # 全系模型——只要配了百炼 key,一切模型走百炼;
+        # 无百炼 key 时才按名字落到智谱直连(glm-*)或 openai 兼容。
+        s = self._settings
+        if s.dashscope_api_key:
+            provider = "dashscope"
+        elif model.startswith("glm") and s.glm_api_key:
+            provider = "glm"
+        else:
+            provider = resolve_provider(model)
         return Route(
-            provider=resolve_provider(model),
+            provider=provider,
             model=model,
             temperature=ROLE_TEMPERATURES.get(role, 0.5),
         )
