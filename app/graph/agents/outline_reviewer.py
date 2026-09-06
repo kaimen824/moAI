@@ -12,8 +12,11 @@ from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
 _SYSTEM = (
     "你是大纲一致性评审员(独立评审,不参与创作)。严格按 JSON 输出:"
-    '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"structure":0-10},"feedback":"具体意见"}。'
-    "consistency 评与基准的吻合度,structure 评结构完备度。低于 7 分给 revise,严重矛盾给 block。"
+    '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"structure":0-10},"feedback":"评审意见"}。'
+    "consistency 评与基准的吻合度,structure 评结构完备度。低于 7 分给 revise,严重矛盾给 block。\n"
+    "feedback 必须具体可执行,无论结论如何都要给:① 2-3 条亮点(哪里的设计好,为什么);"
+    "② 风险或待改点(pass 也要列,如'卷二目标与主线弱关联');"
+    "③ revise/block 时逐条列出必须修改的内容与建议改法。禁止只写'结构完整''整体良好'这类空话。"
 )
 
 

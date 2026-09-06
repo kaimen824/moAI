@@ -420,6 +420,26 @@ function Console({ storyId }) {
               </ScrollArea>
             )}
 
+            {intr.review && (
+              <Flex direction="column" gap="1" p="3" style={{
+                borderRadius: 8, background: 'var(--gray-a3)',
+              }}>
+                <Flex gap="2" align="center" wrap="wrap">
+                  <Text size="1" color="gray">评审 Agent 意见</Text>
+                  <Badge color={intr.review.verdict === 'pass' ? 'grass'
+                    : intr.review.verdict === 'block' ? 'red' : 'amber'}>
+                    {intr.review.verdict}
+                  </Badge>
+                  {intr.review.scores && <Text size="1" color="gray">
+                    {Object.entries(intr.review.scores).map(([k, v]) => `${k} ${v}/10`).join(' · ')}
+                  </Text>}
+                </Flex>
+                {intr.review.feedback && (
+                  <Text size="2" style={{ whiteSpace: 'pre-wrap' }}>{intr.review.feedback}</Text>
+                )}
+              </Flex>
+            )}
+
             {intr.type === 'user_review_chapter' && (
               <Flex direction="column" gap="2">
                 {(intr.outline_review?.feedback || intr.quality_review?.feedback) && (
