@@ -37,6 +37,7 @@ def locked(fn):
 
 _engine: tuple[Deps, Any] | None = None
 _graph: Any = None
+_active: set[str] = set()          # 运行中的 thread(= story_id)
 
 
 def engine() -> tuple[Deps, Any]:
@@ -79,12 +80,35 @@ class FactReview(BaseModel):
 
 # ================= SSE 驱动 =================
 
+_PAYLOAD_KEYS = (
+    "world_settings", "character_drafts", "master_outline", "stage_outline",
+    "chapter_brief", "outline_review", "quality_review", "merged_verdict",
+    "fact_changes", "character_changes", "chapter_summary", "thread_changes",
+    "context_stats",
+)
+
+
+def _extract_payload(update: dict | None) -> dict:
+    """从节点 state 增量中提取可展示的产出(截断超长文本)。"""
+    if not isinstance(update, dict):
+        return {}
+    out = {}
+    for k in _PAYLOAD_KEYS:
+        if k in update:
+            v = update[k]
+            if isinstance(v, str) and len(v) > 4000:
+                v = v[:4000] + "…(已截断)"
+            out[k] = v
+    return out
+
+
 def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
-    """worker 线程跑图,SSE 转发 stage/token/interrupt/done 事件。"""
+    """worker 线程跑图,事件经 deps 广播(多订阅+历史);本响应为主订阅。"""
     deps, _ = engine()
-    q: queue.Queue = queue.Queue()
-    deps.set_event_queue(q)
+    deps.clear_events()                 # 新一轮生成:历史从零
+    q = deps.subscribe()
     cfg = {"configurable": {"thread_id": thread_id}}
+    _active.add(thread_id)
 
     def worker() -> None:
         try:
@@ -94,26 +118,56 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
                 for node, update in chunk.items():
                     if node == "__interrupt__":
                         intr = update[0]
-                        q.put(("interrupt", intr.value))
-                        deps.set_event_queue(None)
+                        deps.emit("interrupt", intr.value)
                         return
-                    q.put(("stage", {"node": node}))
-            q.put(("done", {"ok": True}))
+                    deps.emit("stage", {"node": node, "payload": _extract_payload(update)})
+            deps.emit("done", {"ok": True})
         except Exception as exc:  # noqa: BLE001
-            q.put(("error", {"message": str(exc)}))
+            deps.emit("error", {"message": str(exc)})
         finally:
-            deps.set_event_queue(None)
+            _active.discard(thread_id)
 
     threading.Thread(target=worker, daemon=True).start()
+    return _sse_response(deps, q)
 
+
+def _sse_response(deps, q) -> StreamingResponse:
     def gen():
-        while True:
-            kind, data = q.get(timeout=600)
-            yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-            if kind in ("interrupt", "done", "error"):
-                break
+        try:
+            while True:
+                kind, data = q.get(timeout=3600)
+                yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if kind in ("interrupt", "done", "error"):
+                    break
+        finally:
+            deps.unsubscribe(q)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/stories/{story_id}/run-state")
+@locked
+def run_state(story_id: str):
+    """会话恢复:前端挂载时查询 —— 运行中 / 等待中断(含中断卡数据)/ 空闲 + 事件历史。"""
+    deps, _ = engine()
+    history = [
+        {"kind": k, "data": d} for k, d in deps.snapshot()
+    ]
+    last_interrupt = None
+    for k, d in reversed(deps.snapshot()):
+        if k == "interrupt":
+            last_interrupt = d
+            break
+    status = "running" if story_id in _active else (
+        "waiting" if last_interrupt else "idle")
+    return {"status": status, "interrupt": last_interrupt, "events": history}
+
+
+@app.post("/stories/{story_id}/attach")
+def attach(story_id: str):
+    """断线/刷新后重新订阅事件流(只收不发,不驱动图)。"""
+    deps, _ = engine()
+    return _sse_response(deps, deps.subscribe())
 
 
 # ================= 路由 =================

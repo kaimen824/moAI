@@ -38,20 +38,50 @@ class Deps:
     repo: Repository
     retrieval: RetrievalService
     llm: LLMFacade
-    # SSE 事件总线:写作 token 流等(单任务串行约束下,一次仅一个活跃队列)
-    _event_queue: "queue.Queue | None" = None
+    # SSE 事件总线:广播式多订阅 + 历史留存(刷新/断线后前端可恢复流程)
+    _subscribers: list = field(default_factory=list)
+    _history: list = field(default_factory=list)      # [(kind, data)] 最近 1000 条(含 token)
     # 引擎级可重入互斥:全部 DB 访问(repo 方法 / usage sink / checkpointer / 端点)
     # 各自持锁做短临界区。不全程锁图执行——LangGraph fan-out 节点跑在独立线程。
     run_lock: threading.RLock = field(default_factory=threading.RLock)
     checkpointer: object = None
 
     def emit(self, kind: str, data: dict) -> None:
-        """节点发事件(stage/token/...);无监听时静默。"""
-        if self._event_queue is not None:
-            self._event_queue.put((kind, data))
+        """广播事件到所有订阅者,并留存历史(刷新后可重放)。"""
+        self._history.append((kind, data))
+        if len(self._history) > 1000:
+            del self._history[: len(self._history) - 1000]
+        for q in list(self._subscribers):
+            try:
+                q.put((kind, data))
+            except Exception:
+                pass
+
+    def subscribe(self):
+        """新增订阅者:先喂历史(重放),再接收后续事件。"""
+        q: queue.Queue = queue.Queue()
+        for item in self._history:
+            q.put(item)
+        self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q) -> None:
+        if q in self._subscribers:
+            self._subscribers.remove(q)
+
+    def snapshot(self) -> list:
+        return list(self._history)
+
+    def clear_events(self) -> None:
+        self._history.clear()
+        self._subscribers.clear()
 
     def set_event_queue(self, q) -> None:
-        self._event_queue = q
+        """兼容旧接口:单订阅(现在经 subscribe)。"""
+        if q is None:
+            self._subscribers.clear()
+        else:
+            self._subscribers.append(q)
 
     # ---- 节点辅助 ----
     def supervisor_ctx(self, story_id: str) -> AgentContext:

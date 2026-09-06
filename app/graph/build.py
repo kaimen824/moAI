@@ -125,7 +125,15 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "expanded_entities": result.expanded_entities,
     }
     bundle["carryover"] = deps.recent_carryover(state)
-    return {"context_bundle": bundle, "present_characters": present_ids}
+    stats = {
+        "present": len(present_ids),
+        "pov_facts": len(result.pov_facts),
+        "beliefs": len(result.beliefs),
+        "threads": len(result.active_threads),
+        "expanded_entities": len(result.expanded_entities),
+    }
+    return {"context_bundle": bundle, "present_characters": present_ids,
+            "context_stats": stats}
 
 
 def merge_reviews(state: GraphState, deps: Deps) -> dict:

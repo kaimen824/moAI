@@ -70,6 +70,101 @@ const PIPELINE_LABELS = {
   write_draft: '写作', merge_reviews: '评审', user_review_chapter: '审阅', 'finalize': '定稿',
 }
 
+/* 节点产出渲染:按 payload 字段类型渲染成卡片内容 */
+function PayloadView({ payload }) {
+  if (!payload || !Object.keys(payload).length) return null
+  const els = []
+  const textBlock = (label, v) => (
+    <div key={label} style={{ marginBottom: 8 }}>
+      <div className="muted" style={{ marginBottom: 4 }}>{label}</div>
+      <pre className="pv-pre">{v}</pre>
+    </div>
+  )
+  if (payload.world_settings) els.push(textBlock('世界观设定', payload.world_settings))
+  if (payload.master_outline) els.push(textBlock('总大纲', payload.master_outline))
+  if (payload.stage_outline) els.push(textBlock('阶段细纲', payload.stage_outline))
+  if (payload.chapter_brief) els.push(textBlock('本章要点', payload.chapter_brief))
+  if (payload.chapter_summary) els.push(textBlock('章摘要(检索索引)', payload.chapter_summary))
+  if (payload.character_drafts?.length) els.push(
+    <div key="chars" style={{ marginBottom: 8 }}>
+      <div className="muted" style={{ marginBottom: 4 }}>角色卡</div>
+      {payload.character_drafts.map((c, i) => (
+        <div key={i} className="pv-char"><b>{c.name}</b><span className="muted"> {c.profile}</span></div>
+      ))}
+    </div>
+  )
+  if (payload.character_changes?.length) els.push(
+    <div key="chchg" style={{ marginBottom: 8 }}>
+      <div className="muted" style={{ marginBottom: 4 }}>角色状态更新</div>
+      {payload.character_changes.map((u, i) => (
+        <div key={i} className="pv-char"><b>{u.name}</b><span className="muted"> +{u.profile_append}</span></div>
+      ))}
+    </div>
+  )
+  for (const [rk, label] of [['outline_review', '大纲评审'], ['quality_review', '质量审校']]) {
+    const r = payload[rk]
+    if (r) els.push(
+      <div key={rk} style={{ marginBottom: 8 }}>
+        <div className="muted" style={{ marginBottom: 4 }}>{label}</div>
+        <div className="pv-review">
+          <span className={'badge ' + (r.verdict === 'pass' ? 'ok' : 'pending')}>
+            {r.verdict}
+          </span>
+          {r.scores && <span className="muted" style={{ marginLeft: 8 }}>
+            {Object.entries(r.scores).map(([k, v]) => `${k} ${v}`).join(' · ')}
+          </span>}
+          {r.feedback && <div style={{ marginTop: 4 }}>{r.feedback}</div>}
+        </div>
+      </div>
+    )
+  }
+  if (payload.merged_verdict) els.push(
+    <div key="mv" className="row">
+      <span className="muted">汇总裁决:</span>
+      <span className={'badge ' + (payload.merged_verdict === 'pass' ? 'ok' : 'pending')}>
+        {payload.merged_verdict}
+      </span>
+    </div>
+  )
+  if (payload.fact_changes?.facts?.length || payload.fact_changes?.beliefs?.length) {
+    const fc = payload.fact_changes
+    els.push(
+      <div key="facts" style={{ marginBottom: 8 }}>
+        <div className="muted" style={{ marginBottom: 4 }}>事实抽取(暂存变更集)</div>
+        {(fc.facts || []).map((f, i) => (
+          <div key={i} className="pv-char">
+            <span className={'badge ' + (f.confidence === 'high' ? 'ok' : 'pending')}>{f.confidence}</span>
+            <span style={{ marginLeft: 6 }}>{f.content}</span>
+          </div>
+        ))}
+        {(fc.beliefs || []).map((b, i) => (
+          <div key={'b' + i} className="pv-char">
+            <span className="badge open">认知</span>
+            <span style={{ marginLeft: 6 }}>{b.character}:{b.content}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (payload.thread_changes?.length) els.push(
+    <div key="th" style={{ marginBottom: 8 }}>
+      <div className="muted" style={{ marginBottom: 4 }}>伏笔变更建议</div>
+      {payload.thread_changes.map((t, i) => (
+        <div key={i} className="pv-char"><span className="badge open">{t.action}</span>
+          <span style={{ marginLeft: 6 }}>{t.description}</span></div>
+      ))}
+    </div>
+  )
+  if (payload.context_stats) els.push(
+    <div key="cs" className="muted">
+      检索上下文:在场角色 {payload.context_stats.present} · POV 事实 {payload.context_stats.pov_facts}
+      · 认知 {payload.context_stats.beliefs} · 活跃伏笔 {payload.context_stats.threads}
+      · 关联实体 {payload.context_stats.expanded_entities}
+    </div>
+  )
+  return <div>{els}</div>
+}
+
 function Console({ storyId }) {
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState([])       // [{node, t}]
@@ -94,12 +189,28 @@ function Console({ storyId }) {
   }, [running])
 
   const onEvent = (kind, data) => {
-    if (kind === 'stage') setStages(s => [...s, { node: data.node, t: Date.now() }])
+    if (kind === 'stage') setStages(s => [...s, { node: data.node, t: Date.now(), payload: data.payload || {} }])
     else if (kind === 'token') { setDraft(d => d + (data.text || '')); setTokenCount(c => c + 1) }
     else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)); setRunning(false) }
     else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成'); }
     else if (kind === 'error') { setMsg('错误:' + (data.message || '')); setRunning(false) }
   }
+
+  // 会话恢复:挂载时查询运行状态 —— 重放历史事件 + 等待中断直接恢复卡片 + 运行中自动续订
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      let rs
+      try { rs = await api.runState(storyId) } catch { return }
+      if (cancelled || !rs || rs.status === 'idle') return
+      for (const e of rs.events) onEvent(e.kind, e.data)
+      if (rs.status === 'running') {
+        setRunning(true); setElapsed(0)
+        api.attach(storyId, onEvent).catch(() => {})
+      }
+    })()
+    return () => { cancelled = true }
+  }, [storyId])   // eslint-disable-line
 
   const start = async () => {
     setRunning(true); setStages([]); setDraft(''); setIntr(null); setMsg('')
@@ -181,17 +292,28 @@ function Console({ storyId }) {
           </div>
         )}
 
-        <div className="stage-log" style={{ marginTop: 10 }}>
-          {stages.slice(-10).map((s, i, a) => (
-            <div key={i} className={i === a.length - 1 ? 'cur' : ''}>
-              ▸ {STAGE_LABELS[s.node] || s.node}
-              <span className="muted" style={{ marginLeft: 6 }}>
-                {new Date(s.t).toLocaleTimeString('zh-CN', { hour12: false })}
-              </span>
-            </div>
-          ))}
-          {running && <div className="cur">▸ 正在调用模型(长文生成需 1-3 分钟,计时器在走即正常)…</div>}
-        </div>
+        {/* 节点产出时间线:每个节点的实际产出都可读 */}
+        {stages.length > 0 && (
+          <div className="timeline">
+            {stages.map((s, i) => (
+              <div key={i} className="tl-item">
+                <div className="tl-head">
+                  <span className="tl-dot" />
+                  <b>{STAGE_LABELS[s.node] || s.node}</b>
+                  <span className="muted">{new Date(s.t).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                </div>
+                <div className="tl-body"><PayloadView payload={s.payload} /></div>
+              </div>
+            ))}
+            {running && (
+              <div className="tl-head cur-stage">
+                <span className="tl-dot pulsing" />
+                <b>模型调用中</b>
+                <span className="muted">长文生成需 1-3 分钟,计时器在走即正常</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {draft && (

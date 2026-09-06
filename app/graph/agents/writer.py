@@ -49,7 +49,7 @@ class WriterNode(BaseAgent):
         )
         user = render_context(state)
         # SSE 监听时逐 token 流式;否则一次性
-        if deps._event_queue is not None:
+        if deps._subscribers:
             chunks: list[str] = []
             for token in self.llm.stream(
                 self.role,
