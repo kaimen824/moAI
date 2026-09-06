@@ -175,6 +175,7 @@ function Console({ storyId }) {
   const [msg, setMsg] = useState('')
   const [initialInput, setInitialInput] = useState('')
   const [chapters, setChapters] = useState(1)
+  const [existingChapters, setExistingChapters] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const [tokenCount, setTokenCount] = useState(0)
   const draftRef = useRef(null)
@@ -196,10 +197,18 @@ function Console({ storyId }) {
     else if (kind === 'error') { setMsg('错误:' + (data.message || '')); setRunning(false) }
   }
 
-  // 会话恢复:挂载时查询运行状态 —— 重放历史事件 + 等待中断直接恢复卡片 + 运行中自动续订
+  // 会话恢复 + 续写模式识别:已有 active 章节 -> 续写(隐藏共创输入,target 默认 +1)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      try {
+        const detail = await api.storyDetail(storyId)
+        if (!cancelled && detail.chapters?.length) {
+          const n = detail.chapters.length
+          setExistingChapters(n)
+          setChapters(n + 1)
+        }
+      } catch { /* 详情失败不阻塞 */ }
       let rs
       try { rs = await api.runState(storyId) } catch { return }
       if (cancelled || !rs || rs.status === 'idle') return
@@ -253,17 +262,27 @@ function Console({ storyId }) {
   return (
     <div>
       <div className="panel">
-        <h3>生成控制台 · {storyId.slice(0, 8)}</h3>
-        <div className="row">
-          <textarea rows="2" style={{ flex: 1 }} placeholder="世界观构想(共创访谈起点):基调/核心冲突/角色构想……"
-            value={initialInput} onChange={e => setInitialInput(e.target.value)} />
-        </div>
+        <h3>
+          生成控制台 · {storyId.slice(0, 8)}
+          {existingChapters > 0 && (
+            <span className="badge ok" style={{ marginLeft: 10 }}>
+              续写模式 · 已有 {existingChapters} 章
+            </span>
+          )}
+        </h3>
+        {existingChapters === 0 && (
+          <div className="row">
+            <textarea rows="2" style={{ flex: 1 }} placeholder="世界观构想(共创访谈起点):基调/核心冲突/角色构想……"
+              value={initialInput} onChange={e => setInitialInput(e.target.value)} />
+          </div>
+        )}
         <div className="row" style={{ marginTop: 8 }}>
-          <span className="muted">目标章数</span>
-          <input type="number" min="1" max="20" value={chapters}
+          <span className="muted">{existingChapters > 0 ? '生成到第' : '目标章数'}</span>
+          <input type="number" min={existingChapters + 1} max={99} value={chapters}
             onChange={e => setChapters(+e.target.value)} style={{ width: 70 }} />
+          {existingChapters > 0 && <span className="muted">章</span>}
           <button onClick={start} disabled={running || !!intr}>
-            {running ? '生成中…' : '开始生成'}
+            {running ? '生成中…' : existingChapters > 0 ? '继续生成' : '开始生成'}
           </button>
           {msg && <span className="muted">{msg}</span>}
         </div>

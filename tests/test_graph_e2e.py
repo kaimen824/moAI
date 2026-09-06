@@ -118,6 +118,31 @@ def test_e2e_two_chapters_with_interrupts(engine):
     assert conn.execute("SELECT COUNT(*) c FROM review_results").fetchone()["c"] >= 4
 
 
+def test_e2e_continuation_skips_coauthor(engine):
+    """续写:再次 generate 应跳过共创,从 checkpoint 接续直接产出下一章。"""
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("续写测试", "续")
+    cfg = {"configurable": {"thread_id": "cont-1"}}
+    base = {"story_id": story_id, "branch_id": branch, "initial_input": "x"}
+
+    # 第一次:完整流程写到第 1 章定稿
+    graph.invoke({**base, "target_chapters": 1}, cfg)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)            # 中断 0
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)            # 中断 A
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)  # 中断 B -> 1 章完成
+    assert conn.execute("SELECT COUNT(*) c FROM chapters WHERE status='active'").fetchone()["c"] == 1
+
+    # 续写:target 提到 2 —— 入口路由应跳过共创/总大纲/阶段细纲,直达第 2 章的中断 B
+    result = graph.invoke({**base, "target_chapters": 2}, cfg)
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "user_review_chapter"
+    assert intr["chapter_no"] == 2
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)
+
+    n = conn.execute("SELECT COUNT(*) c FROM chapters WHERE status='active'").fetchone()["c"]
+    assert n == 2
+
+
 def test_e2e_revision_loop_and_user_rewrite(engine):
     """中断点 B 用户提改写意见 -> 回流写作;再次确认定稿。"""
     graph, deps, conn = engine

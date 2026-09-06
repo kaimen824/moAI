@@ -190,6 +190,13 @@ def route_chapter_entry(state: GraphState) -> str:
     return "stage_outline" if state.get("is_stage_first") else "chapter_slice"
 
 
+def route_entry(state: GraphState) -> str:
+    """图入口路由:已有确认大纲 -> 续写(直接下一章);否则完整共创流程。"""
+    if state.get("outline_confirmed"):
+        return "next_chapter"
+    return "coauthor"
+
+
 def route_after_stage_review(state: GraphState) -> str:
     decision = state.get("user_input") or {}
     if decision.get("action") == "revise":
@@ -243,8 +250,11 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_node("summary", _node(SummaryNode(deps.llm), deps))
     g.add_node("finalize", _node(finalize, deps))
 
-    # 共创边
-    g.add_edge(START, "coauthor")
+    # 共创边(入口路由:续写跳过共创,ADR-0011 只走一次)
+    g.add_conditional_edges(
+        START, route_entry,
+        {"coauthor": "coauthor", "next_chapter": "next_chapter"},
+    )
     g.add_edge("coauthor", "init_characters")
     g.add_edge("init_characters", "persist_characters")
     g.add_edge("persist_characters", "gen_master_outline")
