@@ -1,0 +1,33 @@
+[project]
+name = "novel-agent"
+version = "0.1.0"
+description = "Multi-agent long-form novel generation system built on LangGraph"
+readme = "DESIGN_FINAL.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "import-linter>=2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture (api -> graph -> memory -> db; core at bottom)"
+type = "layers"
+layers = [
+    "app.api",
+    "app.graph",
+    "app.memory",
+    "app.db",
+    "app.core",
+]

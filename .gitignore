@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Data & secrets
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+
+# Node (P5)
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/

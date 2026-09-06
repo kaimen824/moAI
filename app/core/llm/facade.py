@@ -1,0 +1,166 @@
+"""LLMFacade:所有 Agent 的唯一调用入口 + usage 埋点(装饰器职责内联于入口)。
+
+埋点经 UsageSink 回调上抛(core 不依赖 db,依赖倒置);无 sink 时静默跳过。
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from typing import Callable, Iterator, Sequence
+
+from app.core.config import AgentRole, Settings, get_settings
+from app.core.llm.base import (
+    ChatMessage,
+    EmbeddingResult,
+    LLMResponse,
+    UsageRecord,
+)
+from app.core.llm.factory import ProviderFactory, build_default_factory
+
+UsageSink = Callable[[UsageRecord], None]
+
+
+class LLMFacade:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        factory: ProviderFactory | None = None,
+        usage_sink: UsageSink | None = None,
+    ):
+        self._settings = settings or get_settings()
+        self._factory = factory
+        self._usage_sink = usage_sink
+
+    # ---- 内部 ----
+    def _get_factory(self) -> ProviderFactory:
+        if self._factory is None:
+            self._factory = build_default_factory(self._settings.glm_api_key)
+        return self._factory
+
+    def set_usage_sink(self, sink: UsageSink | None) -> None:
+        self._usage_sink = sink
+
+    def _emit_usage(self, record: UsageRecord) -> None:
+        if self._usage_sink is not None:
+            try:
+                self._usage_sink(record)
+            except Exception:  # 埋点失败不影响主流程
+                pass
+
+    # ---- 对外入口 ----
+    def chat(
+        self,
+        role: AgentRole | str,
+        messages: Sequence[ChatMessage],
+        *,
+        stage: str = "",
+        story_id: str = "",
+        max_tokens: int | None = None,
+        response_format: dict | None = None,
+    ) -> LLMResponse:
+        from app.core.llm.router import ModelRouter  # 延迟导入避免环
+
+        role = AgentRole(role)
+        route = ModelRouter(self._settings).route(role)
+        trace_id = uuid.uuid4().hex[:16]
+        started = time.perf_counter()
+        client = self._get_factory().chat_client(route.provider)
+        resp = client.chat(
+            route.model,
+            messages,
+            temperature=route.temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        self._emit_usage(
+            UsageRecord(
+                agent=role.value,
+                model=route.model,
+                tokens_in=resp.tokens_in,
+                tokens_out=resp.tokens_out,
+                latency_ms=latency_ms,
+                trace_id=trace_id,
+                stage=stage,
+                story_id=story_id,
+            )
+        )
+        return resp
+
+    def stream(
+        self,
+        role: AgentRole | str,
+        messages: Sequence[ChatMessage],
+        *,
+        stage: str = "",
+        story_id: str = "",
+        max_tokens: int | None = None,
+    ) -> Iterator[str]:
+        """流式生成;埋点在流结束后发(token 统计不可得时记 0,延迟为准)。"""
+        from app.core.llm.router import ModelRouter
+
+        role = AgentRole(role)
+        route = ModelRouter(self._settings).route(role)
+        trace_id = uuid.uuid4().hex[:16]
+        started = time.perf_counter()
+
+        def _wrap(iterator: Iterator[str]) -> Iterator[str]:
+            total_chars = 0
+            try:
+                for chunk in iterator:
+                    total_chars += len(chunk)
+                    yield chunk
+            finally:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                self._emit_usage(
+                    UsageRecord(
+                        agent=role.value,
+                        model=route.model,
+                        tokens_out=total_chars // 2,   # 粗估,无精确 usage
+                        latency_ms=latency_ms,
+                        trace_id=trace_id,
+                        stage=stage,
+                        story_id=story_id,
+                    )
+                )
+
+        client = self._get_factory().chat_client(route.provider)
+        return _wrap(
+            client.stream(
+                route.model, messages,
+                temperature=route.temperature, max_tokens=max_tokens,
+            )
+        )
+
+    def embed(
+        self,
+        texts: Sequence[str],
+        *,
+        stage: str = "embed",
+        story_id: str = "",
+    ) -> EmbeddingResult:
+        from app.core.llm.router import ModelRouter
+
+        route = ModelRouter(self._settings).route(AgentRole.EMBEDDING)
+        trace_id = uuid.uuid4().hex[:16]
+        started = time.perf_counter()
+        client = self._get_factory().embed_client(route.provider)
+        result = client.embed(route.model, texts)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        self._emit_usage(
+            UsageRecord(
+                agent="EMBEDDING",
+                model=route.model,
+                tokens_in=result.tokens_in,
+                latency_ms=latency_ms,
+                trace_id=trace_id,
+                stage=stage,
+                story_id=story_id,
+            )
+        )
+        return result
+
+
+# 进程级默认实例(经 Settings 单例读取配置)
+llm = LLMFacade()

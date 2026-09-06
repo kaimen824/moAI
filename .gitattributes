@@ -1,0 +1,4 @@
+# 统一换行:仓库内 LF,检出按平台
+* text=auto eol=lf
+*.db binary
+*.png binary
