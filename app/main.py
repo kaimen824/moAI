@@ -65,6 +65,7 @@ class CreateStory(BaseModel):
 class GenerateRequest(BaseModel):
     target_chapters: int = 1
     initial_input: str = ""
+    tags: list[str] = []              # 题材标签(Dify 式 token):独立单元,可多选
     branch_id: str = ""
 
 
@@ -221,9 +222,11 @@ def generate(story_id: str, req: GenerateRequest):
     if not story:
         raise HTTPException(404, "story not found")
     branch = req.branch_id or story["main_branch_id"]
+    tags_part = ("题材标签:" + " ".join("#" + t for t in req.tags) + "\n") if req.tags else ""
     return _sse_run(
         {"story_id": story_id, "branch_id": branch,
-         "target_chapters": req.target_chapters, "initial_input": req.initial_input},
+         "target_chapters": req.target_chapters,
+         "initial_input": tags_part + req.initial_input},
         thread_id=story_id,
     )
 

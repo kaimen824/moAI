@@ -12,25 +12,45 @@ import { api } from './api.js'
 import Landing from './Landing.jsx'
 import { TEMPLATES } from './templates.js'
 
-/* 模板芯片:点选填入构想 */
-function TemplateChips({ onPick }) {
+/* 题材标签(token 输入):可多选 toggle,选中项作为独立单元进入输入区 */
+function TemplateChips({ selected, onToggle }) {
   return (
     <Flex gap="2" wrap="wrap" align="center">
-      <Text size="1" color="gray">找灵感:</Text>
-      {TEMPLATES.map(t => (
-        <Tooltip key={t.tag} content={t.title}>
-          <Text as="span" size="1" weight="medium" style={{
-            cursor: 'pointer', padding: '4px 12px', borderRadius: 999,
-            background: 'var(--accent-a3)', color: 'var(--accent-11)',
-            border: '1px solid var(--accent-a5)', userSelect: 'none',
-            transition: 'background .15s',
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-a5)'}
-          onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-a3)'}
-          onClick={() => onPick(t.tag)}>
-            #{t.tag}
-          </Text>
-        </Tooltip>
+      <Text size="1" color="gray">题材标签:</Text>
+      {TEMPLATES.map(t => {
+        const on = selected.includes(t.tag)
+        return (
+          <Tooltip key={t.tag} content={t.title}>
+            <Text as="span" size="1" weight="medium" style={{
+              cursor: 'pointer', padding: '4px 12px', borderRadius: 999,
+              background: on ? 'var(--accent-9)' : 'var(--gray-a3)',
+              color: on ? 'white' : 'var(--gray-11)',
+              border: `1px solid ${on ? 'var(--accent-9)' : 'var(--gray-a5)'}`,
+              userSelect: 'none', transition: 'background .15s',
+            }} onClick={() => onToggle(t.tag)}>
+              #{t.tag}
+            </Text>
+          </Tooltip>
+        )
+      })}
+    </Flex>
+  )
+}
+
+/* 已选标签行:每个标签独立成单元,× 单独删除 */
+function SelectedTags({ tags, onRemove }) {
+  if (!tags.length) return null
+  return (
+    <Flex gap="2" wrap="wrap" pt="2" px="2" style={{ borderBottom: '1px solid var(--gray-a4)' }}>
+      {tags.map(t => (
+        <Flex key={t} align="center" gap="1" px="2" style={{
+          padding: '3px 10px', borderRadius: 999, marginBottom: 6,
+          background: 'var(--accent-a4)', border: '1px solid var(--accent-a6)',
+        }}>
+          <Text size="1" weight="medium" color="gray">#{t}</Text>
+          <Text as="span" size="1" style={{ cursor: 'pointer', lineHeight: 1, color: 'var(--gray-11)' }}
+            onClick={() => onRemove(t)}>×</Text>
+        </Flex>
       ))}
     </Flex>
   )
@@ -244,6 +264,7 @@ function Console({ storyId }) {
   const [elapsed, setElapsed] = useState(0)
   const [directive, setDirective] = useState('')
   const [directiveMsg, setDirectiveMsg] = useState('')
+  const [tags, setTags] = useState([])
   const draftRef = useRef(null)
 
   useEffect(() => {
@@ -290,7 +311,7 @@ function Console({ storyId }) {
     setRunning(true); setStages([]); setDraft(''); setIntr(null); setMsg('')
     setElapsed(0)
     try {
-      await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput }, onEvent)
+      await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput, tags }, onEvent)
     } catch (e) { setMsg('错误:' + e.message) }
     setRunning(false)
   }
@@ -358,9 +379,14 @@ function Console({ storyId }) {
 
           {existingChapters === 0 && (
             <Flex direction="column" gap="2">
-              <TextArea size="2" rows="3" placeholder="世界观构想(共创起点):基调 / 核心冲突 / 角色构想……"
-                value={initialInput} onChange={e => setInitialInput(e.target.value)} />
-              <TemplateChips onPick={t => setInitialInput(t)} />
+              <div style={{ border: '1px solid var(--gray-a6)', borderRadius: 8 }}>
+                <SelectedTags tags={tags} onRemove={t => setTags(x => x.filter(i => i !== t))} />
+                <TextArea size="2" rows="3" variant="soft" style={{ boxShadow: 'none' }}
+                  placeholder="补充构想(可选):基调 / 核心冲突 / 角色想法……"
+                  value={initialInput} onChange={e => setInitialInput(e.target.value)} />
+              </div>
+              <TemplateChips selected={tags}
+                onToggle={t => setTags(x => x.includes(t) ? x.filter(i => i !== t) : [...x, t])} />
             </Flex>
           )}
 
