@@ -155,11 +155,20 @@ function PayloadView({ payload }) {
       ))}
     </div>
   )
+  if (payload.context_stats?.user_directives > 0) els.push(
+    <div key="ud" style={{ marginBottom: 8 }}>
+      <div className="muted" style={{ marginBottom: 4 }}>用户指示(本章生效)</div>
+      {(payload.user_directives || []).map((d, i) => (
+        <div key={i} className="pv-char">★ {d}</div>
+      ))}
+    </div>
+  )
   if (payload.context_stats) els.push(
     <div key="cs" className="muted">
       检索上下文:在场角色 {payload.context_stats.present} · POV 事实 {payload.context_stats.pov_facts}
       · 认知 {payload.context_stats.beliefs} · 活跃伏笔 {payload.context_stats.threads}
       · 关联实体 {payload.context_stats.expanded_entities}
+      {payload.context_stats.user_directives > 0 && ` · 用户指示 ${payload.context_stats.user_directives} 条`}
     </div>
   )
   return <div>{els}</div>
@@ -259,9 +268,28 @@ function Console({ storyId }) {
 
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
+  const [directive, setDirective] = useState('')
+  const [directiveMsg, setDirectiveMsg] = useState('')
+  const sendDirective = async () => {
+    if (!directive.trim()) return
+    try {
+      const r = await api.directive(storyId, directive)
+      setDirectiveMsg(`已记录(${r.pending} 条待生效),将在下一章生成的上下文中被主控消费`)
+      setDirective('')
+    } catch (e) { setDirectiveMsg('提交失败:' + e.message) }
+  }
+
   return (
     <div>
       <div className="panel">
+        {/* 用户指令通道:任意时刻输入 */}
+        <div className="row" style={{ marginBottom: 8 }}>
+          <input style={{ flex: 1 }} placeholder="随时告诉主控你的想法(如:下一章加入新角色 / 节奏加快 / 回收某条伏笔)……"
+            value={directive} onChange={e => setDirective(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && sendDirective()} />
+          <button className="ghost" onClick={sendDirective} disabled={!directive.trim()}>提交指示</button>
+        </div>
+        {directiveMsg && <div className="muted" style={{ marginBottom: 6 }}>{directiveMsg}</div>}
         <h3>
           生成控制台 · {storyId.slice(0, 8)}
           {existingChapters > 0 && (

@@ -84,7 +84,7 @@ _PAYLOAD_KEYS = (
     "world_settings", "character_drafts", "master_outline", "stage_outline",
     "chapter_brief", "outline_review", "quality_review", "merged_verdict",
     "fact_changes", "character_changes", "chapter_summary", "thread_changes",
-    "context_stats",
+    "context_stats", "user_directives",
 )
 
 
@@ -275,6 +275,24 @@ def review_fact(fact_id: str, req: FactReview):
     if cur.rowcount == 0:
         raise HTTPException(404, "pending fact not found")
     return {"fact_id": fact_id, "status": new_status}
+
+
+class DirectiveRequest(BaseModel):
+    text: str
+
+
+@app.post("/stories/{story_id}/directive")
+@locked
+def post_directive(story_id: str, req: DirectiveRequest):
+    """用户指令通道:任意时刻提交,下一次章节生成的上下文中被主控消费。"""
+    deps, _ = engine()
+    if req.text.strip():
+        deps.record_directive(story_id, req.text.strip())
+    n = deps.conn.execute(
+        "SELECT COUNT(*) c FROM user_directives WHERE story_id=? AND consumed_at IS NULL",
+        (story_id,),
+    ).fetchone()["c"]
+    return {"ok": True, "pending": n}
 
 
 # ================= 模型配置(ADR-0008:运行时覆盖)=================

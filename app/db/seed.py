@@ -17,7 +17,7 @@ _WRITER_DOMAINS: dict[str, list[str]] = {
         "stories", "outlines", "branches", "facts", "beliefs",
         "fact_visibility", "characters", "chapters", "paragraphs",
         "chapter_summaries", "plot_threads", "temporal_relations",
-        "entities", "entity_links", "review_results",
+        "entities", "entity_links", "review_results", "user_directives",
     ],
 }
 

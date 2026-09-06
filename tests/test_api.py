@@ -115,3 +115,17 @@ def test_story_crud_and_404(client):
     assert c.get("/stories/nonexistent").status_code == 404
     assert c.get("/stories/nonexistent/chapters/1").status_code == 404
     assert c.post("/facts/xxx/review", json={"approve": True}).status_code == 404
+
+
+def test_directive_channel(client):
+    """用户指令通道:任意时刻提交,run-state 前挂起,生成时被消费。"""
+    c, _ = client
+    sid = c.post("/stories", json={"title": "指令测试"}).json()["story_id"]
+
+    r = c.post(f"/stories/{sid}/directive", json={"text": "下一章加入一只会说话的黑猫"}).json()
+    assert r["ok"] and r["pending"] == 1
+
+    # 提交两条再消费计数
+    c.post(f"/stories/{sid}/directive", json={"text": "节奏加快"})
+    r = c.post(f"/stories/{sid}/directive", json={"text": ""}).json()   # 空文本忽略
+    assert r["pending"] == 2

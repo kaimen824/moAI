@@ -226,6 +226,15 @@ CREATE TABLE IF NOT EXISTS retrieval_audit (
   latency_ms    INTEGER,
   created_at    TEXT NOT NULL
 );
+
+-- ========== 用户指令通道(任意时刻输入,生成时消费)==========
+CREATE TABLE IF NOT EXISTS user_directives (
+  id          TEXT PRIMARY KEY,
+  story_id    TEXT NOT NULL REFERENCES stories(id),
+  content     TEXT NOT NULL,
+  consumed_at TEXT,                            -- NULL = 待消费
+  created_at  TEXT NOT NULL
+);
 """
 
 ALL_TABLES = [
@@ -235,5 +244,5 @@ ALL_TABLES = [
     "plot_threads", "temporal_relations",
     "entities", "entity_links",
     "agent_acl",
-    "review_results", "usage_log", "retrieval_audit",
+    "review_results", "usage_log", "retrieval_audit", "user_directives",
 ]

@@ -125,12 +125,17 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "expanded_entities": result.expanded_entities,
     }
     bundle["carryover"] = deps.recent_carryover(state)
+    # 用户指令通道:消费挂起的指示,注入本章上下文(最高优先级)
+    directives = deps.take_pending_directives(state["story_id"])
+    if directives:
+        bundle["user_directives"] = directives
     stats = {
         "present": len(present_ids),
         "pov_facts": len(result.pov_facts),
         "beliefs": len(result.beliefs),
         "threads": len(result.active_threads),
         "expanded_entities": len(result.expanded_entities),
+        "user_directives": len(directives),
     }
     return {"context_bundle": bundle, "present_characters": present_ids,
             "context_stats": stats}

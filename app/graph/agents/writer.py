@@ -11,6 +11,9 @@ def render_context(state: dict) -> str:
     """把检索服务组装的 context_bundle 渲染为 prompt 片段(POV 已在检索层过滤)。"""
     bundle = state.get("context_bundle", {})
     parts: list[str] = []
+    if bundle.get("user_directives"):
+        lines = "\n".join(f"- {d}" for d in bundle["user_directives"])
+        parts.append(f"[用户指示(最高优先级,必须遵从)]\n{lines}")
     if state.get("master_outline"):
         parts.append(f"[全书大纲]\n{state['master_outline']}")
     if state.get("chapter_brief"):

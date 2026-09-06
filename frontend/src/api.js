@@ -48,6 +48,7 @@ export const api = {
   resume: (id, payload, onEvent) => sse(`/stories/${id}/resume`, payload, onEvent),
   attach: (id, onEvent) => sse(`/stories/${id}/attach`, {}, onEvent),
   runState: (id) => j(`/stories/${id}/run-state`),
+  directive: (id, text) => j(`/stories/${id}/directive`, { method: "POST", body: JSON.stringify({ text }) }),
   pendingFacts: () => j("/facts/pending"),
   reviewFact: (fid, approve) => j(`/facts/${fid}/review`, { method: "POST", body: JSON.stringify({ approve }) }),
   usage: (id) => j(`/stories/${id}/usage`),

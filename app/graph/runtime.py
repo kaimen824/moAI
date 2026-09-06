@@ -83,6 +83,35 @@ class Deps:
         else:
             self._subscribers.append(q)
 
+    # ---- 用户指令通道(任意时刻输入,生成时消费)----
+    def record_directive(self, story_id: str, content: str) -> str:
+        """用户随时提交的指示;在下一次 build_context 时被主控消费。"""
+        with self.run_lock:
+            did = uuid.uuid4().hex
+            self.conn.execute(
+                "INSERT INTO user_directives (id, story_id, content, consumed_at, created_at)"
+                " VALUES (?,?,?,?,?)",
+                (did, story_id, content, None, _now()),
+            )
+            self.conn.commit()
+            return did
+
+    def take_pending_directives(self, story_id: str) -> list[str]:
+        """取走未消费指令(消费即标记);build_context 调用。"""
+        with self.run_lock:
+            rows = self.conn.execute(
+                "SELECT id, content FROM user_directives"
+                " WHERE story_id=? AND consumed_at IS NULL ORDER BY created_at",
+                (story_id,),
+            ).fetchall()
+            for r in rows:
+                self.conn.execute(
+                    "UPDATE user_directives SET consumed_at=? WHERE id=?",
+                    (_now(), r["id"]),
+                )
+            self.conn.commit()
+            return [r["content"] for r in rows]
+
     # ---- 节点辅助 ----
     def supervisor_ctx(self, story_id: str) -> AgentContext:
         return AgentContext("supervisor", story_id)
