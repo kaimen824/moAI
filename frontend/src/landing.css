@@ -1,0 +1,152 @@
+/* 墨澜 MoLan 落地页 — 暗夜编辑风 · 单 accent 墨金 · 衬线标题(出版语境) */
+
+.landing {
+  --ink: #0f1216;
+  --ink-2: #151a21;
+  --paper: #e8e3d8;
+  --paper-dim: #b7b1a3;
+  --gold: #e0af68;
+  --hairline: rgba(232, 227, 216, 0.1);
+  --serif: Georgia, "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+  --sans: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  min-height: 100dvh;
+}
+.landing ::selection { background: var(--gold); color: var(--ink); }
+
+.l-wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+/* ---- Nav ---- */
+.l-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 68px; border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0; background: rgba(15, 18, 22, 0.92);
+  backdrop-filter: blur(8px); z-index: 10;
+}
+.l-logo { font-family: var(--serif); font-size: 20px; letter-spacing: 0.35em; color: var(--paper); }
+.l-logo em { color: var(--gold); font-style: normal; }
+.l-nav-links { display: flex; gap: 32px; }
+.l-nav-links a { color: var(--paper-dim); text-decoration: none; font-size: 14px; }
+.l-nav-links a:hover { color: var(--paper); }
+
+.l-cta {
+  background: var(--gold); color: var(--ink); border: none; cursor: pointer;
+  font-size: 14px; font-weight: 600; padding: 9px 20px; border-radius: 4px;
+  font-family: var(--sans); text-decoration: none; display: inline-block;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s;
+}
+.l-cta:hover { filter: brightness(1.08); }
+.l-cta:active { transform: translateY(1px); }
+
+/* ---- Hero(非对称分栏)---- */
+.l-hero {
+  display: grid; grid-template-columns: 7fr 5fr; gap: 48px; align-items: center;
+  padding: 96px 0 72px; min-height: calc(100dvh - 68px);
+}
+.l-hero h1 {
+  font-family: var(--serif); font-weight: 400;
+  font-size: clamp(34px, 5vw, 58px); line-height: 1.25; margin: 0 0 20px;
+  letter-spacing: 0.02em;
+}
+.l-hero h1 em { font-style: normal; color: var(--gold); }
+.l-hero p { color: var(--paper-dim); font-size: 16px; line-height: 1.9; margin: 0 0 32px; max-width: 34em; }
+
+/* 真实组件预览(阅读器 mini 版,非假截图) */
+.l-preview {
+  background: var(--ink-2); border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 22px 24px; position: relative;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.l-preview .pv-title { font-family: var(--serif); font-size: 13px; color: var(--gold); letter-spacing: 0.2em; margin-bottom: 14px; }
+.l-preview .pv-body { font-family: var(--serif); font-size: 15px; line-height: 2.1; color: var(--paper); }
+.l-preview .pv-body .pv-pov {
+  border-bottom: 1px dashed rgba(224, 175, 104, 0.5); cursor: help;
+}
+.l-preview .pv-note {
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hairline);
+  font-size: 12px; color: var(--paper-dim); line-height: 1.8;
+}
+.l-preview .pv-note b { color: var(--gold); font-weight: 600; }
+
+/* ---- 分节通用 ---- */
+.l-section { padding: 88px 0; border-top: 1px solid var(--hairline); }
+.l-section h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(24px, 3vw, 34px); margin: 0 0 40px; }
+.l-section h2 em { font-style: normal; color: var(--gold); }
+
+/* ---- 流程:三段横排(动词名词,无编号)---- */
+.l-steps { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
+.l-step { padding: 0 28px; border-left: 1px solid var(--hairline); }
+.l-step:first-child { border-left: none; padding-left: 0; }
+.l-step h3 { font-size: 17px; margin: 0 0 10px; color: var(--paper); font-weight: 600; }
+.l-step p { font-size: 14px; color: var(--paper-dim); line-height: 1.9; margin: 0; }
+
+/* ---- Bento(非对称,含视觉变化格)---- */
+.l-bento { display: grid; grid-template-columns: 5fr 4fr 3fr; grid-template-rows: auto auto; gap: 14px; }
+.l-cell {
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 24px;
+  background: var(--ink-2);
+}
+.l-cell h3 { font-size: 16px; margin: 0 0 8px; font-weight: 600; }
+.l-cell p { font-size: 13.5px; color: var(--paper-dim); line-height: 1.85; margin: 0; }
+.l-cell.span-2 { grid-column: span 2; }
+.l-cell.tall { grid-row: span 2; display: flex; flex-direction: column; justify-content: space-between; }
+
+/* 视觉变化格:墨金渐变记忆格 */
+.l-cell.memory {
+  background:
+    radial-gradient(ellipse at 85% 15%, rgba(224, 175, 104, 0.16), transparent 55%),
+    linear-gradient(160deg, #1b1f27, #14171d);
+}
+.l-cell.memory .glyph {
+  font-family: var(--serif); font-size: 44px; color: var(--gold);
+  opacity: 0.9; line-height: 1; margin-bottom: 18px;
+}
+/* 视觉变化格:细纹图案格 */
+.l-cell.texture {
+  background:
+    repeating-linear-gradient(45deg, transparent 0 8px, rgba(232, 227, 216, 0.025) 8px 9px),
+    var(--ink-2);
+}
+
+/* ---- 证据(真实评测数据)---- */
+.l-evidence { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 40px; }
+.l-ev-num { font-family: var(--serif); font-size: 52px; color: var(--gold); line-height: 1; }
+.l-ev-num small { font-size: 18px; color: var(--paper-dim); }
+.l-ev-cap { font-size: 13px; color: var(--paper-dim); margin-top: 10px; line-height: 1.8; }
+.l-ev-cap b { color: var(--paper); font-weight: 600; }
+.l-method { margin-top: 36px; font-size: 12px; color: var(--paper-dim); opacity: 0.75; }
+
+/* ---- 结尾 CTA ---- */
+.l-final { text-align: center; padding: 120px 0; border-top: 1px solid var(--hairline); }
+.l-final h2 { margin-bottom: 12px; }
+.l-final p { color: var(--paper-dim); margin: 0 0 32px; }
+
+.l-footer {
+  border-top: 1px solid var(--hairline); padding: 28px 0;
+  display: flex; justify-content: space-between; font-size: 12px; color: var(--paper-dim);
+}
+
+/* ---- 动效(克制;reduced-motion 降级)---- */
+@media (prefers-reduced-motion: no-preference) {
+  .l-reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1); }
+  .l-reveal.in { opacity: 1; transform: none; }
+  .l-hero .l-hero-copy { animation: hero-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .l-hero .l-preview { animation: hero-in 0.8s 0.15s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  @keyframes hero-in { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .l-reveal { opacity: 1; transform: none; }
+}
+
+/* ---- 移动端显式折叠 ---- */
+@media (max-width: 860px) {
+  .l-nav-links { display: none; }
+  .l-hero { grid-template-columns: 1fr; padding: 56px 0 48px; min-height: auto; gap: 32px; }
+  .l-steps { grid-template-columns: 1fr; gap: 24px; }
+  .l-step { border-left: none; padding: 0; }
+  .l-bento { grid-template-columns: 1fr; }
+  .l-cell.span-2, .l-cell.tall { grid-column: auto; grid-row: auto; }
+  .l-evidence { grid-template-columns: 1fr; gap: 28px; }
+}

@@ -222,6 +222,33 @@ def review_fact(fact_id: str, req: FactReview):
     return {"fact_id": fact_id, "status": new_status}
 
 
+# ================= 模型配置(ADR-0008:运行时覆盖)=================
+
+@app.get("/config/models")
+@locked
+def get_models():
+    from app.core.config import AgentRole, get_settings
+    s = get_settings()
+    return {role.value: s.model_for(role) for role in AgentRole}
+
+
+class ModelOverride(BaseModel):
+    role: str
+    model: str
+
+
+@app.post("/config/models")
+@locked
+def set_model(req: ModelOverride):
+    from app.core.config import AgentRole, get_settings
+    try:
+        role = AgentRole(req.role)
+    except ValueError:
+        raise HTTPException(400, f"unknown role: {req.role}")
+    get_settings().set_model_override(role, req.model)
+    return {"role": req.role, "model": req.model}
+
+
 # ================= 可观测性 =================
 
 @app.get("/stories/{story_id}/usage")
