@@ -191,8 +191,10 @@ def route_chapter_entry(state: GraphState) -> str:
 
 
 def route_entry(state: GraphState) -> str:
-    """图入口路由:已有确认大纲 -> 续写(直接下一章);否则完整共创流程。"""
-    if state.get("outline_confirmed"):
+    """图入口路由:已有定稿章节或确认大纲 -> 续写(直接下一章);否则完整共创。
+    判据用 chapters_done(DB 定稿数同步)优先——outline_confirmed 可能被
+    历史中断的重跑污染为 False,chapters_done 只增不减,更稳。"""
+    if state.get("chapters_done", 0) > 0 or state.get("outline_confirmed"):
         return "next_chapter"
     return "coauthor"
 
