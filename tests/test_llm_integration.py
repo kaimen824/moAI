@@ -1,12 +1,9 @@
-"""P1 验收:GLM 真实调用集成测试。
+"""P1 验收:真实模型调用集成测试。
 
-需要环境变量 GLM_API_KEY;未设置时整组跳过(mark.skipif)。
-模型名可通过 MODEL__SUMMARY 等覆盖(默认值若在账号上不可用)。
+DASHSCOPE_API_KEY(百炼,默认路由)或 GLM_API_KEY 任一可用即运行;均未设置时跳过。
 """
 
 from __future__ import annotations
-
-import os
 
 import pytest
 
@@ -14,9 +11,13 @@ from app.core.config import AgentRole, get_settings
 from app.core.llm.base import ChatMessage
 from app.core.llm.facade import LLMFacade
 
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("GLM_API_KEY"), reason="GLM_API_KEY 未设置,跳过集成测试"
-)
+
+def _has_key() -> bool:
+    s = get_settings()
+    return bool(s.dashscope_api_key or s.glm_api_key)
+
+
+pytestmark = pytest.mark.skipif(not _has_key(), reason="DASHSCOPE/GLM API key 未设置,跳过集成测试")
 
 
 def test_glm_chat_real():

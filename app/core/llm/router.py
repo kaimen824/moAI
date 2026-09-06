@@ -34,6 +34,9 @@ def resolve_provider(model: str) -> str:
     # 智谱模型族:glm-* 系列 + embedding-*
     if model.startswith("glm") or model.startswith("embedding-"):
         return "glm"
+    # 阿里云百炼模型族:qwen-* 系列 + text-embedding-*
+    if model.startswith("qwen") or model.startswith("text-embedding-"):
+        return "dashscope"
     return "openai"
 
 

@@ -38,7 +38,7 @@ class FakeEmbed(EmbedClient):
 
 
 class FakeFamily(ProviderFamily):
-    name = "glm"   # 冒充 glm,让路由命中
+    name = "dashscope"   # 冒充默认 provider,让路由命中
 
     def __init__(self):
         self.chat = FakeChat()
@@ -68,7 +68,7 @@ def test_chat_emits_usage_to_sink(db, isolated_settings):
     assert resp.content
     row = db.execute("SELECT * FROM usage_log").fetchone()
     assert row["agent"] == "WRITER"
-    assert row["model"].startswith("glm")
+    assert row["model"].startswith("qwen")
     assert row["tokens_in"] == 10 and row["tokens_out"] == 5
     assert row["stage"] == "draft"
     assert row["latency_ms"] >= 0

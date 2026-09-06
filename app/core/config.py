@@ -13,6 +13,21 @@ from pathlib import Path
 from threading import Lock
 
 
+def _load_dotenv(path: Path | None = None) -> None:
+    """极简 .env 加载(已设置的环境变量优先,不覆盖)。"""
+    env_file = path or Path(__file__).resolve().parents[2] / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 class AgentRole(str, Enum):
     """模型路由角色(ADR-0008 分级表)。"""
 
@@ -27,15 +42,16 @@ class AgentRole(str, Enum):
 
 
 # 代码默认值(最低优先级);实际部署通过 .env / 环境变量 / 前端配置页覆盖
+# 默认走阿里云百炼(qwen 系);切换 GLM 只需 MODEL__* 环境变量覆盖
 DEFAULT_MODELS: dict[AgentRole, str] = {
-    AgentRole.SUPERVISOR: "glm-4.6",
-    AgentRole.OUTLINE: "glm-4.6",
-    AgentRole.REVIEWER: "glm-4.6",
-    AgentRole.WRITER: "glm-4.6",
-    AgentRole.EVENT: "glm-4.5-air",
-    AgentRole.CHARACTER: "glm-4.5-flash",
-    AgentRole.SUMMARY: "glm-4.5-flash",
-    AgentRole.EMBEDDING: "embedding-3",
+    AgentRole.SUPERVISOR: "qwen-max",
+    AgentRole.OUTLINE: "qwen-max",
+    AgentRole.REVIEWER: "qwen-max",
+    AgentRole.WRITER: "qwen-max",
+    AgentRole.EVENT: "qwen-plus",
+    AgentRole.CHARACTER: "qwen-turbo",
+    AgentRole.SUMMARY: "qwen-turbo",
+    AgentRole.EMBEDDING: "text-embedding-v3",
 }
 
 DEFAULT_DB_PATH = Path("data") / "novel_agent.db"
@@ -48,6 +64,7 @@ class Settings:
     """全局配置。读取顺序:runtime_overrides > 环境变量 > 默认值。"""
 
     glm_api_key: str = ""
+    dashscope_api_key: str = ""
     db_path: Path = DEFAULT_DB_PATH
     _model_overrides: dict[AgentRole, str] = field(default_factory=dict)
 
@@ -96,12 +113,14 @@ _settings: Settings | None = None
 
 
 def get_settings() -> Settings:
-    """进程级单例。环境变量在此时读取(GLM_API_KEY / NOVEL_DB_PATH)。"""
+    """进程级单例。环境变量在此时读取(.env 预加载,已设置的环境变量优先)。"""
     global _settings
     with _lock:
         if _settings is None:
+            _load_dotenv()
             _settings = Settings(
                 glm_api_key=os.environ.get("GLM_API_KEY", ""),
+                dashscope_api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
                 db_path=Path(os.environ.get("NOVEL_DB_PATH", str(DEFAULT_DB_PATH))),
             )
         return _settings

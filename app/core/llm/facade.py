@@ -41,7 +41,10 @@ class LLMFacade:
     # ---- 内部 ----
     def _get_factory(self) -> ProviderFactory:
         if self._factory is None:
-            self._factory = build_default_factory(self._settings.glm_api_key)
+            self._factory = build_default_factory(
+                self._settings.glm_api_key,
+                getattr(self._settings, "dashscope_api_key", ""),
+            )
         return self._factory
 
     def set_usage_sink(self, sink: UsageSink | None) -> None:

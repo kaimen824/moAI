@@ -20,6 +20,7 @@ def db(tmp_path):
 def isolated_settings(monkeypatch):
     """隔离环境变量与单例,防止宿主机 .env 泄入测试。"""
     monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     monkeypatch.delenv("NOVEL_DB_PATH", raising=False)
     for key in list(__import__("os").environ):
         if key.startswith("MODEL__"):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.llm.base import ChatClient, EmbedClient, ProviderFamily
+from app.core.llm.providers.dashscope import DashScopeFamily
 from app.core.llm.providers.glm import GLMFamily
 from app.core.llm.providers.openai_compat import OpenAICompatFamily
 
@@ -40,10 +41,12 @@ class ProviderFactory:
         return self._registry.get(provider).create_embed_client()
 
 
-def build_default_factory(glm_api_key: str) -> ProviderFactory:
-    """默认装配:GLM + 通用 OpenAI 兼容。"""
+def build_default_factory(glm_api_key: str, dashscope_api_key: str = "") -> ProviderFactory:
+    """默认装配:GLM + 百炼(DashScope)+ 通用 OpenAI 兼容。"""
     registry = ProviderRegistry()
     registry.register(GLMFamily(api_key=glm_api_key))
+    if dashscope_api_key:
+        registry.register(DashScopeFamily(api_key=dashscope_api_key))
     registry.register(
         OpenAICompatFamily(
             name="openai", api_key=glm_api_key, base_url="https://api.openai.com/v1"
