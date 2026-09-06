@@ -1,4 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  Badge, Button, Card, Checkbox, Code, DataList, Flex, Heading, ScrollArea,
+  Separator, Spinner, Table, Tabs, Text, TextArea, TextField, Tooltip,
+} from '@radix-ui/themes'
+import {
+  BookOpenIcon, CheckCircleIcon, CheckIcon, XCircleIcon,
+  GearIcon, LightningIcon, ListIcon, MagnifyingGlassIcon, PencilSimpleIcon,
+  PlayIcon, BookOpenTextIcon, PaperPlaneTiltIcon, StarIcon,
+} from '@phosphor-icons/react'
 import { api } from './api.js'
 import Landing from './Landing.jsx'
 
@@ -18,37 +27,46 @@ function Library({ onOpen }) {
   }
 
   return (
-    <div>
-      <div className="panel">
-        <h3>新建小说</h3>
-        <div className="row">
-          <input placeholder="书名" value={title} onChange={e => setTitle(e.target.value)} />
-          <input placeholder="一句话简介(可选)" value={premise} onChange={e => setPremise(e.target.value)} style={{ flex: 1 }} />
-          <button onClick={create}>创建并开始共创</button>
-        </div>
-      </div>
-      <div className="panel">
-        <h3>书库({stories.length})</h3>
-        {stories.map(s => (
-          <div key={s.id} className="story-item" onClick={() => onOpen(s.id)}>
-            <div>{s.title}</div>
-            <div className="muted">{s.status}</div>
-          </div>
-        ))}
-        {!stories.length && <div className="muted">暂无,先创建一本</div>}
-      </div>
-    </div>
+    <Flex direction="column" gap="4" style={{ maxWidth: 720 }}>
+      <Card size="3">
+        <Flex direction="column" gap="3">
+          <Heading size="4">新建小说</Heading>
+          <Flex gap="3" wrap="wrap">
+            <TextField.Root size="2" placeholder="书名" value={title}
+              style={{ width: 200 }} onChange={e => setTitle(e.target.value)} />
+            <TextField.Root size="2" placeholder="一句话简介(可选)" value={premise}
+              style={{ flex: 1, minWidth: 220 }} onChange={e => setPremise(e.target.value)} />
+            <Button size="2" onClick={create} disabled={!title.trim()}>
+              <PencilSimpleIcon size={14} weight="bold" /> 创建并开始共创
+            </Button>
+          </Flex>
+        </Flex>
+      </Card>
+
+      <Card size="3">
+        <Flex direction="column" gap="3">
+          <Flex align="center" gap="2">
+            <BookOpenIcon size={16} />
+            <Heading size="4">书库</Heading>
+            <Badge color="gray" variant="soft">{stories.length}</Badge>
+          </Flex>
+          {stories.map(s => (
+            <Card key={s.id} size="2" variant="surface" style={{ cursor: 'pointer' }}
+              onClick={() => onOpen(s.id)}>
+              <Flex align="center" justify="between">
+                <Text size="3" weight="medium">{s.title}</Text>
+                <Badge color={s.status === 'active' ? 'grass' : 'gray'} variant="soft">{s.status}</Badge>
+              </Flex>
+            </Card>
+          ))}
+          {!stories.length && <Text size="2" color="gray">暂无,先创建一本</Text>}
+        </Flex>
+      </Card>
+    </Flex>
   )
 }
 
 /* ================= 生成控制台(核心) ================= */
-const INTERRUPT_TITLES = {
-  confirm_master_outline: '中断点 0 · 确认总大纲',
-  confirm_stage_outline: '中断点 A · 确认阶段细纲',
-  user_review_chapter: '中断点 B · 章节审阅',
-}
-
-/* 节点名 -> 人话 + 流水线步骤(用于进度条) */
 const STAGE_LABELS = {
   coauthor: '共创世界观', init_characters: '设计角色', persist_characters: '角色入库',
   gen_master_outline: '撰写总大纲', review_master_outline: '评审总大纲',
@@ -61,24 +79,21 @@ const STAGE_LABELS = {
   event_extract: '抽取事实入库', update_characters: '更新角色卡',
   summary: '生成章摘要', finalize: '定稿落库',
 }
-const PIPELINE = [
-  'coauthor', 'gen_master_outline', 'stage_outline', 'write_draft',
-  'merge_reviews', 'user_review_chapter', 'finalize',
-]
-const PIPELINE_LABELS = {
-  coauthor: '共创', gen_master_outline: '大纲', stage_outline: '细纲',
-  write_draft: '写作', merge_reviews: '评审', user_review_chapter: '审阅', 'finalize': '定稿',
-}
+const PIPELINE = ['coauthor', 'gen_master_outline', 'stage_outline', 'write_draft',
+  'merge_reviews', 'user_review_chapter', 'finalize']
+const PIPELINE_LABELS = { coauthor: '共创', gen_master_outline: '大纲', stage_outline: '细纲',
+  write_draft: '写作', merge_reviews: '评审', user_review_chapter: '审阅', finalize: '定稿' }
 
-/* 节点产出渲染:按 payload 字段类型渲染成卡片内容 */
 function PayloadView({ payload }) {
   if (!payload || !Object.keys(payload).length) return null
   const els = []
   const textBlock = (label, v) => (
-    <div key={label} style={{ marginBottom: 8 }}>
-      <div className="muted" style={{ marginBottom: 4 }}>{label}</div>
-      <pre className="pv-pre">{v}</pre>
-    </div>
+    <Flex key={label} direction="column" gap="1" style={{ marginBottom: 10 }}>
+      <Text size="1" color="gray">{label}</Text>
+      <ScrollArea scrollbars="vertical" style={{ maxHeight: 190 }}>
+        <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap' }}>{v}</Text>
+      </ScrollArea>
+    </Flex>
   )
   if (payload.world_settings) els.push(textBlock('世界观设定', payload.world_settings))
   if (payload.master_outline) els.push(textBlock('总大纲', payload.master_outline))
@@ -86,112 +101,130 @@ function PayloadView({ payload }) {
   if (payload.chapter_brief) els.push(textBlock('本章要点', payload.chapter_brief))
   if (payload.chapter_summary) els.push(textBlock('章摘要(检索索引)', payload.chapter_summary))
   if (payload.character_drafts?.length) els.push(
-    <div key="chars" style={{ marginBottom: 8 }}>
-      <div className="muted" style={{ marginBottom: 4 }}>角色卡</div>
+    <Flex key="chars" direction="column" gap="1" style={{ marginBottom: 10 }}>
+      <Text size="1" color="gray">角色卡</Text>
       {payload.character_drafts.map((c, i) => (
-        <div key={i} className="pv-char"><b>{c.name}</b><span className="muted"> {c.profile}</span></div>
+        <Flex key={i} gap="2" align="baseline">
+          <Text size="2" weight="bold">{c.name}</Text>
+          <Text size="2" color="gray">{c.profile}</Text>
+        </Flex>
       ))}
-    </div>
+    </Flex>
   )
   if (payload.character_changes?.length) els.push(
-    <div key="chchg" style={{ marginBottom: 8 }}>
-      <div className="muted" style={{ marginBottom: 4 }}>角色状态更新</div>
+    <Flex key="chchg" direction="column" gap="1" style={{ marginBottom: 10 }}>
+      <Text size="1" color="gray">角色状态更新</Text>
       {payload.character_changes.map((u, i) => (
-        <div key={i} className="pv-char"><b>{u.name}</b><span className="muted"> +{u.profile_append}</span></div>
+        <Flex key={i} gap="2" align="baseline">
+          <Text size="2" weight="bold">{u.name}</Text>
+          <Text size="2" color="gray">+ {u.profile_append}</Text>
+        </Flex>
       ))}
-    </div>
+    </Flex>
   )
   for (const [rk, label] of [['outline_review', '大纲评审'], ['quality_review', '质量审校']]) {
     const r = payload[rk]
     if (r) els.push(
-      <div key={rk} style={{ marginBottom: 8 }}>
-        <div className="muted" style={{ marginBottom: 4 }}>{label}</div>
-        <div className="pv-review">
-          <span className={'badge ' + (r.verdict === 'pass' ? 'ok' : 'pending')}>
+      <Flex key={rk} direction="column" gap="1" style={{ marginBottom: 10 }}>
+        <Text size="1" color="gray">{label}</Text>
+        <Flex gap="2" align="center" wrap="wrap">
+          <Badge color={r.verdict === 'pass' ? 'grass' : r.verdict === 'block' ? 'red' : 'amber'}>
             {r.verdict}
-          </span>
-          {r.scores && <span className="muted" style={{ marginLeft: 8 }}>
+          </Badge>
+          {r.scores && <Text size="1" color="gray">
             {Object.entries(r.scores).map(([k, v]) => `${k} ${v}`).join(' · ')}
-          </span>}
-          {r.feedback && <div style={{ marginTop: 4 }}>{r.feedback}</div>}
-        </div>
-      </div>
+          </Text>}
+        </Flex>
+        {r.feedback && <Text size="2">{r.feedback}</Text>}
+      </Flex>
     )
   }
   if (payload.merged_verdict) els.push(
-    <div key="mv" className="row">
-      <span className="muted">汇总裁决:</span>
-      <span className={'badge ' + (payload.merged_verdict === 'pass' ? 'ok' : 'pending')}>
+    <Flex key="mv" gap="2" align="center">
+      <Text size="1" color="gray">汇总裁决</Text>
+      <Badge color={payload.merged_verdict === 'pass' ? 'grass'
+        : payload.merged_verdict === 'forced_pass' ? 'red' : 'amber'}>
         {payload.merged_verdict}
-      </span>
-    </div>
+      </Badge>
+    </Flex>
   )
   if (payload.fact_changes?.facts?.length || payload.fact_changes?.beliefs?.length) {
     const fc = payload.fact_changes
     els.push(
-      <div key="facts" style={{ marginBottom: 8 }}>
-        <div className="muted" style={{ marginBottom: 4 }}>事实抽取(暂存变更集)</div>
+      <Flex key="facts" direction="column" gap="1" style={{ marginBottom: 10 }}>
+        <Text size="1" color="gray">事实抽取(暂存变更集)</Text>
         {(fc.facts || []).map((f, i) => (
-          <div key={i} className="pv-char">
-            <span className={'badge ' + (f.confidence === 'high' ? 'ok' : 'pending')}>{f.confidence}</span>
-            <span style={{ marginLeft: 6 }}>{f.content}</span>
-          </div>
+          <Flex key={i} gap="2" align="baseline">
+            <Badge color={f.confidence === 'high' ? 'grass' : 'amber'}>{f.confidence}</Badge>
+            <Text size="2">{f.content}</Text>
+          </Flex>
         ))}
         {(fc.beliefs || []).map((b, i) => (
-          <div key={'b' + i} className="pv-char">
-            <span className="badge open">认知</span>
-            <span style={{ marginLeft: 6 }}>{b.character}:{b.content}</span>
-          </div>
+          <Flex key={'b' + i} gap="2" align="baseline">
+            <Badge color="blue">认知</Badge>
+            <Text size="2">{b.character}:{b.content}</Text>
+          </Flex>
         ))}
-      </div>
+      </Flex>
     )
   }
   if (payload.thread_changes?.length) els.push(
-    <div key="th" style={{ marginBottom: 8 }}>
-      <div className="muted" style={{ marginBottom: 4 }}>伏笔变更建议</div>
+    <Flex key="th" direction="column" gap="1" style={{ marginBottom: 10 }}>
+      <Text size="1" color="gray">伏笔变更建议</Text>
       {payload.thread_changes.map((t, i) => (
-        <div key={i} className="pv-char"><span className="badge open">{t.action}</span>
-          <span style={{ marginLeft: 6 }}>{t.description}</span></div>
+        <Flex key={i} gap="2" align="baseline">
+          <Badge color="violet">{t.action}</Badge>
+          <Text size="2">{t.description}</Text>
+        </Flex>
       ))}
-    </div>
+    </Flex>
   )
   if (payload.context_stats?.user_directives > 0) els.push(
-    <div key="ud" style={{ marginBottom: 8 }}>
-      <div className="muted" style={{ marginBottom: 4 }}>用户指示(本章生效)</div>
+    <Flex key="ud" direction="column" gap="1" style={{ marginBottom: 10 }}>
+      <Text size="1" color="gray">用户指示(本章生效)</Text>
       {(payload.user_directives || []).map((d, i) => (
-        <div key={i} className="pv-char">★ {d}</div>
+        <Flex key={i} gap="2" align="baseline">
+          <StarIcon size={13} weight="fill" color="#e0af68" />
+          <Text size="2">{d}</Text>
+        </Flex>
       ))}
-    </div>
+    </Flex>
   )
   if (payload.context_stats) els.push(
-    <div key="cs" className="muted">
+    <Text key="cs" size="1" color="gray">
       检索上下文:在场角色 {payload.context_stats.present} · POV 事实 {payload.context_stats.pov_facts}
       · 认知 {payload.context_stats.beliefs} · 活跃伏笔 {payload.context_stats.threads}
       · 关联实体 {payload.context_stats.expanded_entities}
       {payload.context_stats.user_directives > 0 && ` · 用户指示 ${payload.context_stats.user_directives} 条`}
-    </div>
+    </Text>
   )
-  return <div>{els}</div>
+  return <Flex direction="column">{els}</Flex>
+}
+
+const INTERRUPT_TITLES = {
+  confirm_master_outline: '中断点 0 · 确认总大纲',
+  confirm_stage_outline: '中断点 A · 确认阶段细纲',
+  user_review_chapter: '中断点 B · 章节审阅',
 }
 
 function Console({ storyId }) {
   const [running, setRunning] = useState(false)
-  const [stages, setStages] = useState([])       // [{node, t}]
+  const [stages, setStages] = useState([])
   const [draft, setDraft] = useState('')
   const [intr, setIntr] = useState(null)
   const [feedback, setFeedback] = useState('')
-  const [picked, setPicked] = useState([])       // 勾选确认的伏笔
+  const [picked, setPicked] = useState([])
   const [msg, setMsg] = useState('')
   const [initialInput, setInitialInput] = useState('')
   const [chapters, setChapters] = useState(1)
   const [existingChapters, setExistingChapters] = useState(0)
   const [elapsed, setElapsed] = useState(0)
-  const [tokenCount, setTokenCount] = useState(0)
+  const [directive, setDirective] = useState('')
+  const [directiveMsg, setDirectiveMsg] = useState('')
   const draftRef = useRef(null)
 
   useEffect(() => { draftRef.current?.scrollTo(0, draftRef.current.scrollHeight) }, [draft])
 
-  // 运行计时器:一秒一跳,证明前端活着
   useEffect(() => {
     if (!running) return
     const t = setInterval(() => setElapsed(e => e + 1), 1000)
@@ -200,24 +233,22 @@ function Console({ storyId }) {
 
   const onEvent = (kind, data) => {
     if (kind === 'stage') setStages(s => [...s, { node: data.node, t: Date.now(), payload: data.payload || {} }])
-    else if (kind === 'token') { setDraft(d => d + (data.text || '')); setTokenCount(c => c + 1) }
+    else if (kind === 'token') setDraft(d => d + (data.text || ''))
     else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)); setRunning(false) }
-    else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成'); }
+    else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成') }
     else if (kind === 'error') { setMsg('错误:' + (data.message || '')); setRunning(false) }
   }
 
-  // 会话恢复 + 续写模式识别:已有 active 章节 -> 续写(隐藏共创输入,target 默认 +1)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const detail = await api.storyDetail(storyId)
         if (!cancelled && detail.chapters?.length) {
-          const n = detail.chapters.length
-          setExistingChapters(n)
-          setChapters(n + 1)
+          setExistingChapters(detail.chapters.length)
+          setChapters(detail.chapters.length + 1)
         }
-      } catch { /* 详情失败不阻塞 */ }
+      } catch { /* 忽略 */ }
       let rs
       try { rs = await api.runState(storyId) } catch { return }
       if (cancelled || !rs || rs.status === 'idle') return
@@ -232,7 +263,7 @@ function Console({ storyId }) {
 
   const start = async () => {
     setRunning(true); setStages([]); setDraft(''); setIntr(null); setMsg('')
-    setElapsed(0); setTokenCount(0)
+    setElapsed(0)
     try {
       await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput }, onEvent)
     } catch (e) { setMsg('错误:' + e.message) }
@@ -242,7 +273,7 @@ function Console({ storyId }) {
   const send = async (action) => {
     if (!intr) return
     setRunning(true); setMsg(''); setElapsed(0)
-    if (action === 'revise') { setDraft(''); setTokenCount(0) }
+    if (action === 'revise') setDraft('')
     const payload = {
       action,
       feedback: action === 'revise' ? feedback : '',
@@ -255,163 +286,210 @@ function Console({ storyId }) {
     setRunning(false)
   }
 
+  const sendDirective = async () => {
+    if (!directive.trim()) return
+    try {
+      const r = await api.directive(storyId, directive)
+      setDirectiveMsg(`已记录(${r.pending} 条待生效),下一章生成时由主控消费`)
+      setDirective('')
+    } catch (e) { setDirectiveMsg('提交失败:' + e.message) }
+  }
+
   const lastStage = stages.length ? stages[stages.length - 1].node : ''
   const curLabel = running
     ? (STAGE_LABELS[lastStage] || lastStage || '启动中') + '…'
     : (intr ? '等你操作' : (msg || '空闲'))
-  // 流水线进度:当前所处步骤(最后一个命中 PIPELINE 的阶段)
   const curPipeIdx = (() => {
     let idx = -1
     for (const s of stages) { const i = PIPELINE.indexOf(s.node); if (i > idx) idx = i }
     return idx
   })()
-
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
-  const [directive, setDirective] = useState('')
-  const [directiveMsg, setDirectiveMsg] = useState('')
-  const sendDirective = async () => {
-    if (!directive.trim()) return
-    try {
-      const r = await api.directive(storyId, directive)
-      setDirectiveMsg(`已记录(${r.pending} 条待生效),将在下一章生成的上下文中被主控消费`)
-      setDirective('')
-    } catch (e) { setDirectiveMsg('提交失败:' + e.message) }
-  }
-
   return (
-    <div>
-      <div className="panel">
-        {/* 用户指令通道:任意时刻输入 */}
-        <div className="row" style={{ marginBottom: 8 }}>
-          <input style={{ flex: 1 }} placeholder="随时告诉主控你的想法(如:下一章加入新角色 / 节奏加快 / 回收某条伏笔)……"
+    <Flex direction="column" gap="4" style={{ maxWidth: 860 }}>
+      {/* 指令通道 */}
+      <Card size="2">
+        <Flex gap="3" align="center" wrap="wrap">
+          <TextField.Root size="2" style={{ flex: 1, minWidth: 260 }}
+            placeholder="随时告诉主控你的想法(下一章加入新角色 / 节奏加快 / 回收伏笔)…"
             value={directive} onChange={e => setDirective(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && sendDirective()} />
-          <button className="ghost" onClick={sendDirective} disabled={!directive.trim()}>提交指示</button>
-        </div>
-        {directiveMsg && <div className="muted" style={{ marginBottom: 6 }}>{directiveMsg}</div>}
-        <h3>
-          生成控制台 · {storyId.slice(0, 8)}
-          {existingChapters > 0 && (
-            <span className="badge ok" style={{ marginLeft: 10 }}>
-              续写模式 · 已有 {existingChapters} 章
-            </span>
-          )}
-        </h3>
-        {existingChapters === 0 && (
-          <div className="row">
-            <textarea rows="2" style={{ flex: 1 }} placeholder="世界观构想(共创访谈起点):基调/核心冲突/角色构想……"
+          <Button size="2" variant="surface" onClick={sendDirective} disabled={!directive.trim()}>
+            <PaperPlaneTiltIcon size={14} /> 提交指示
+          </Button>
+        </Flex>
+        {directiveMsg && <Text size="1" color="gray" style={{ marginTop: 6 }}>{directiveMsg}</Text>}
+      </Card>
+
+      <Card size="3">
+        <Flex direction="column" gap="3">
+          <Flex align="center" gap="2">
+            <LightningIcon size={16} weight="fill" color="#e0af68" />
+            <Heading size="4">生成控制台</Heading>
+            <Code size="1">{storyId.slice(0, 8)}</Code>
+            {existingChapters > 0 && <Badge color="grass" variant="soft">续写模式 · 已有 {existingChapters} 章</Badge>}
+          </Flex>
+
+          {existingChapters === 0 && (
+            <TextArea size="2" rows="2" placeholder="世界观构想(共创起点):基调 / 核心冲突 / 角色构想……"
               value={initialInput} onChange={e => setInitialInput(e.target.value)} />
-          </div>
-        )}
-        <div className="row" style={{ marginTop: 8 }}>
-          <span className="muted">{existingChapters > 0 ? '生成到第' : '目标章数'}</span>
-          <input type="number" min={existingChapters + 1} max={99} value={chapters}
-            onChange={e => setChapters(+e.target.value)} style={{ width: 70 }} />
-          {existingChapters > 0 && <span className="muted">章</span>}
-          <button onClick={start} disabled={running || !!intr}>
-            {running ? '生成中…' : existingChapters > 0 ? '继续生成' : '开始生成'}
-          </button>
-          {msg && <span className="muted">{msg}</span>}
-        </div>
+          )}
 
-        {/* 运行状态条:状态灯 + 当前阶段 + 计时 */}
-        {(running || intr) && (
-          <div className={'run-status ' + (running ? 'is-running' : 'is-waiting')}>
-            <span className="dot" />
-            <b>{curLabel}</b>
-            <span className="muted" style={{ marginLeft: 'auto' }}>
-              已耗时 {fmt(elapsed)}
-              {tokenCount > 0 && ` · 已写出 ${draft.length} 字`}
-            </span>
-          </div>
-        )}
+          <Flex gap="3" align="center" wrap="wrap">
+            <Text size="2" color="gray">{existingChapters > 0 ? '生成到第' : '目标章数'}</Text>
+            <TextField.Root size="2" type="number" style={{ width: 76 }}
+              value={chapters} min={existingChapters + 1}
+              onChange={e => setChapters(+e.target.value)} />
+            {existingChapters > 0 && <Text size="2" color="gray">章</Text>}
+            <Button onClick={start} disabled={running || !!intr}>
+              {running ? <Spinner size="1" /> : <PlayIcon size={14} weight="bold" />}
+              {running ? '生成中' : existingChapters > 0 ? '继续生成' : '开始生成'}
+            </Button>
+            {msg && <Text size="1" color="gray">{msg}</Text>}
+          </Flex>
 
-        {/* 流水线步骤 */}
-        {(running || intr || stages.length > 0) && (
-          <div className="pipe">
-            {PIPELINE.map((p, i) => (
-              <div key={p} className={'pipe-step ' + (i < curPipeIdx ? 'done' : i === curPipeIdx ? 'cur' : '')}>
-                <span className="pipe-idx">{i < curPipeIdx ? '✓' : i + 1}</span>
-                {PIPELINE_LABELS[p]}
-              </div>
-            ))}
-          </div>
-        )}
+          {/* 运行状态 */}
+          {(running || intr) && (
+            <Flex align="center" gap="2" px="3" py="2"
+              style={{
+                borderRadius: 8,
+                background: running ? 'var(--grass-a3)' : 'var(--amber-a3)',
+              }}>
+              {running
+                ? <Spinner size="1" />
+                : <StarIcon size={14} weight="fill" color="#e0af68" />}
+              <Text size="2" weight="medium">{curLabel}</Text>
+              <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>
+                已耗时 {fmt(elapsed)}{draft.length > 0 && ` · 已写出 ${draft.length} 字`}
+              </Text>
+            </Flex>
+          )}
 
-        {/* 节点产出时间线:每个节点的实际产出都可读 */}
-        {stages.length > 0 && (
-          <div className="timeline">
-            {stages.map((s, i) => (
-              <div key={i} className="tl-item">
-                <div className="tl-head">
-                  <span className="tl-dot" />
-                  <b>{STAGE_LABELS[s.node] || s.node}</b>
-                  <span className="muted">{new Date(s.t).toLocaleTimeString('zh-CN', { hour12: false })}</span>
-                </div>
-                <div className="tl-body"><PayloadView payload={s.payload} /></div>
-              </div>
-            ))}
-            {running && (
-              <div className="tl-head cur-stage">
-                <span className="tl-dot pulsing" />
-                <b>模型调用中</b>
-                <span className="muted">长文生成需 1-3 分钟,计时器在走即正常</span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+          {/* 流水线 */}
+          {(running || intr || stages.length > 0) && (
+            <Flex gap="2" wrap="wrap">
+              {PIPELINE.map((p, i) => (
+                <Flex key={p} align="center" gap="1" px="2" py="1"
+                  style={{
+                    borderRadius: 999,
+                    border: `1px solid ${i === curPipeIdx ? 'var(--accent-a7)' : 'var(--gray-a5)'}`,
+                    background: i === curPipeIdx ? 'var(--accent-a3)' : i < curPipeIdx ? 'var(--grass-a2)' : 'transparent',
+                  }}>
+                  {i < curPipeIdx
+                    ? <CheckIcon size={12} weight="bold" color="var(--grass-11)" />
+                    : <Text size="1">{i + 1}</Text>}
+                  <Text size="1" weight={i === curPipeIdx ? 'bold' : 'regular'}>{PIPELINE_LABELS[p]}</Text>
+                </Flex>
+              ))}
+            </Flex>
+          )}
+        </Flex>
+      </Card>
 
+      {/* 正文流 */}
       {draft && (
-        <div className="panel">
-          <h3>正文(实时流式)</h3>
-          <div className="draft-stream" ref={draftRef}>{draft}</div>
-        </div>
+        <Card size="3">
+          <Flex direction="column" gap="2">
+            <Flex align="center" gap="2">
+              <BookOpenTextIcon size={16} />
+              <Heading size="4">正文(实时流式)</Heading>
+              <Badge color="gray" variant="soft">{draft.length} 字</Badge>
+            </Flex>
+            <ScrollArea scrollbars="vertical" style={{ maxHeight: 440 }} ref={draftRef}>
+              <Text as="div" size="3" style={{ whiteSpace: 'pre-wrap', lineHeight: 2 }}>{draft}</Text>
+            </ScrollArea>
+          </Flex>
+        </Card>
       )}
 
+      {/* 中断卡 */}
       {intr && (
-        <div className="panel">
-          <div className="interrupt-card">
-            <h4>{INTERRUPT_TITLES[intr.type] || intr.type}</h4>
-            {intr.outline && <pre>{intr.outline}</pre>}
-            {intr.stage_outline && <pre>{intr.stage_outline}</pre>}
+        <Card size="3" style={{ borderColor: 'var(--amber-a7)', background: 'var(--amber-a2)' }}>
+          <Flex direction="column" gap="3">
+            <Flex align="center" gap="2">
+              <StarIcon size={16} weight="fill" color="#e0af68" />
+              <Heading size="4" color="amber">{INTERRUPT_TITLES[intr.type] || intr.type}</Heading>
+            </Flex>
+
+            {(intr.outline || intr.stage_outline) && (
+              <ScrollArea scrollbars="vertical" style={{ maxHeight: 240 }}>
+                <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap' }}>
+                  {intr.outline || intr.stage_outline}
+                </Text>
+              </ScrollArea>
+            )}
+
             {intr.type === 'user_review_chapter' && (
-              <>
+              <Flex direction="column" gap="2">
                 {(intr.outline_review?.feedback || intr.quality_review?.feedback) && (
-                  <div className="muted" style={{ margin: '8px 0' }}>
-                    大纲评审:{intr.outline_review?.verdict} · 质量评审:{intr.quality_review?.verdict}
-                    {intr.forced_pass && <span style={{ color: 'var(--err)' }}> · ⚠ 强制通过(已达重写上限)</span>}
-                  </div>
+                  <Text size="1" color="gray">
+                    大纲评审 {intr.outline_review?.verdict} · 质量审校 {intr.quality_review?.verdict}
+                    {intr.forced_pass && <Text size="1" color="red" weight="bold"> · ⚠ 强制通过(已达重写上限)</Text>}
+                  </Text>
                 )}
                 {(intr.thread_changes || []).length > 0 && (
-                  <div style={{ margin: '10px 0' }}>
-                    <div className="muted">伏笔变更(人工二次确认,勾选后随定稿生效):</div>
+                  <Flex direction="column" gap="1">
+                    <Text size="1" color="gray">伏笔变更(勾选后随定稿生效):</Text>
                     {intr.thread_changes.map((t, i) => (
-                      <label key={i} className="thread-check">
-                        <input type="checkbox" checked={picked.includes(i)}
-                          onChange={e => setPicked(p => e.target.checked ? [...p, i] : p.filter(x => x !== i))} />
-                        <span>[{t.action}] {t.description}</span>
-                      </label>
+                      <Text key={i} as="label" size="2">
+                        <Checkbox checked={picked.includes(i)}
+                          onCheckedChange={c => setPicked(p => c ? [...p, i] : p.filter(x => x !== i))} />
+                        {'  '}[{t.action}] {t.description}
+                      </Text>
                     ))}
-                  </div>
+                  </Flex>
                 )}
-              </>
+              </Flex>
             )}
-            <div className="row" style={{ marginTop: 12 }}>
-              <button onClick={() => send('confirm')}>
+
+            <Flex gap="3" align="center" wrap="wrap">
+              <Button color="grass" onClick={() => send('confirm')}>
+                <CheckCircleIcon size={14} weight="bold" />
                 {intr.type === 'user_review_chapter' ? '确认定稿' : '确认通过'}
-              </button>
-              <input placeholder="修改意见(选填,填写后点'要求修改'" style={{ flex: 1 }}
+              </Button>
+              <TextField.Root size="2" style={{ flex: 1, minWidth: 200 }}
+                placeholder="修改意见(填写后点「要求修改」)"
                 value={feedback} onChange={e => setFeedback(e.target.value)} />
-              <button className="warn" onClick={() => send('revise')} disabled={!feedback.trim()}>
-                要求修改
-              </button>
-            </div>
-          </div>
-        </div>
+              <Button color="amber" variant="soft" onClick={() => send('revise')} disabled={!feedback.trim()}>
+                <PencilSimpleIcon size={14} /> 要求修改
+              </Button>
+            </Flex>
+          </Flex>
+        </Card>
       )}
-    </div>
+
+      {/* 节点产出时间线 */}
+      {stages.length > 0 && (
+        <Card size="3">
+          <Flex direction="column" gap="3">
+            <Flex align="center" gap="2">
+              <ListIcon size={16} />
+              <Heading size="4">节点产出</Heading>
+            </Flex>
+            {stages.map((s, i) => (
+              <Card key={i} size="2" variant="surface">
+                <Flex direction="column" gap="2">
+                  <Flex align="center" gap="2">
+                    <Text size="2" weight="bold">{STAGE_LABELS[s.node] || s.node}</Text>
+                    <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>
+                      {new Date(s.t).toLocaleTimeString('zh-CN', { hour12: false })}
+                    </Text>
+                  </Flex>
+                  <PayloadView payload={s.payload} />
+                </Flex>
+              </Card>
+            ))}
+            {running && (
+              <Flex align="center" gap="2">
+                <Spinner size="1" />
+                <Text size="2" color="gray">模型调用中(长文生成 1-3 分钟,计时器在走即正常)</Text>
+              </Flex>
+            )}
+          </Flex>
+        </Card>
+      )}
+    </Flex>
   )
 }
 
@@ -420,41 +498,58 @@ function Reader({ storyId }) {
   const [detail, setDetail] = useState(null)
   const [current, setCurrent] = useState(null)
   const refresh = () => api.storyDetail(storyId).then(setDetail).catch(() => {})
-  useEffect(() => { refresh() }, [storyId])
-
+  useEffect(() => { refresh() }, [storyId])   // eslint-disable-line
   const open = async (no) => {
     const ch = await api.chapter(storyId, no)
     setCurrent(ch); refresh()
   }
 
   return (
-    <div className="reader-layout">
-      <div className="panel" style={{ marginBottom: 0 }}>
-        <h3>章节</h3>
-        {detail?.chapters?.map(c => (
-          <div key={c.id} className={'chapter-list-item' + (current?.chapter_no === c.chapter_no ? ' active' : '')}
-            onClick={() => open(c.chapter_no)}>
-            第 {c.chapter_no} 章
-          </div>
-        ))}
-        {!detail?.chapters?.length && <div className="muted">还没有已定稿章节</div>}
-        <h3 style={{ marginTop: 16 }}>伏笔</h3>
-        {detail?.plot_threads?.map(t => (
-          <div key={t.id} style={{ margin: '6px 0' }}>
-            <span className={`badge ${t.status}`}>{t.status}</span> {t.description}
-          </div>
-        ))}
-        <h3 style={{ marginTop: 16 }}>角色</h3>
-        {detail?.characters?.map(c => (
-          <div key={c.id} style={{ margin: '6px 0' }}><b>{c.name}</b>
-            <div className="muted">{(c.profile || '').slice(0, 60)}</div>
-          </div>
-        ))}
-      </div>
-      <div className="panel">
-        {current ? <div className="chapter-content">{current.content}</div> : <div className="muted">选择左侧章节阅读</div>}
-      </div>
-    </div>
+    <Flex gap="4" align="start" style={{ flexWrap: 'wrap' }}>
+      <Card size="2" style={{ width: 260, flexShrink: 0 }}>
+        <Flex direction="column" gap="3">
+          <Heading size="3">章节</Heading>
+          {detail?.chapters?.map(c => (
+            <Text key={c.id} size="2" as="div" style={{
+              cursor: 'pointer', padding: '4px 8px', borderRadius: 6,
+              background: current?.chapter_no === c.chapter_no ? 'var(--accent-a3)' : 'transparent',
+            }} onClick={() => open(c.chapter_no)}>
+              第 {c.chapter_no} 章
+            </Text>
+          ))}
+          {!detail?.chapters?.length && <Text size="2" color="gray">还没有已定稿章节</Text>}
+          <Separator size="4" />
+          <Heading size="3">伏笔</Heading>
+          {detail?.plot_threads?.map(t => (
+            <Flex key={t.id} gap="2" align="baseline">
+              <Badge color={t.status === 'open' ? 'violet' : 'grass'}>{t.status}</Badge>
+              <Text size="1">{t.description}</Text>
+            </Flex>
+          ))}
+          <Separator size="4" />
+          <Heading size="3">角色</Heading>
+          <ScrollArea scrollbars="vertical" style={{ maxHeight: 260 }}>
+            <Flex direction="column" gap="2">
+              {detail?.characters?.map(c => (
+                <Flex key={c.id} direction="column">
+                  <Text size="2" weight="bold">{c.name}</Text>
+                  <Text size="1" color="gray">{(c.profile || '').slice(0, 80)}</Text>
+                </Flex>
+              ))}
+            </Flex>
+          </ScrollArea>
+        </Flex>
+      </Card>
+      <Card size="3" style={{ flex: 1, minWidth: 320 }}>
+        {current
+          ? <ScrollArea scrollbars="vertical" style={{ maxHeight: 640 }}>
+              <Text as="div" size="3" style={{ whiteSpace: 'pre-wrap', lineHeight: 2.1, maxWidth: 720 }}>
+                {current.content}
+              </Text>
+            </ScrollArea>
+          : <Text color="gray">选择左侧章节阅读</Text>}
+      </Card>
+    </Flex>
   )
 }
 
@@ -466,26 +561,45 @@ function FactQueue() {
   const review = async (fid, ok) => { await api.reviewFact(fid, ok); refresh() }
 
   return (
-    <div className="panel">
-      <h3>低置信事实抽检队列(E3 置信度分层)</h3>
-      <table>
-        <thead><tr><th>来源</th><th>内容</th><th>章节</th><th>操作</th></tr></thead>
-        <tbody>
-          {facts.map(f => (
-            <tr key={f.id}>
-              <td className="muted">{f.story_title}</td>
-              <td>{f.content}</td>
-              <td className="muted">{f.chapter_established}</td>
-              <td>
-                <button onClick={() => review(f.id, true)}>确认</button>{' '}
-                <button className="ghost" onClick={() => review(f.id, false)}>拒绝</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {!facts.length && <div className="muted">队列为空</div>}
-    </div>
+    <Card size="3" style={{ maxWidth: 900 }}>
+      <Flex direction="column" gap="3">
+        <Flex align="center" gap="2">
+          <MagnifyingGlassIcon size={16} />
+          <Heading size="4">低置信事实抽检队列</Heading>
+          <Badge color={facts.length ? 'amber' : 'gray'} variant="soft">{facts.length}</Badge>
+        </Flex>
+        <Table.Root variant="surface">
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeaderCell>来源</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>内容</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>章</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>操作</Table.ColumnHeaderCell>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {facts.map(f => (
+              <Table.Row key={f.id}>
+                <Table.RowHeaderCell>{f.story_title}</Table.RowHeaderCell>
+                <Table.Cell><Text size="2">{f.content}</Text></Table.Cell>
+                <Table.Cell>{f.chapter_established}</Table.Cell>
+                <Table.Cell>
+                  <Flex gap="2">
+                    <Button size="1" color="grass" variant="soft" onClick={() => review(f.id, true)}>
+                      <CheckIcon size={12} /> 确认
+                    </Button>
+                    <Button size="1" color="red" variant="soft" onClick={() => review(f.id, false)}>
+                      <XCircleIcon size={12} /> 拒绝
+                    </Button>
+                  </Flex>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table.Root>
+        {!facts.length && <Text size="2" color="gray">队列为空</Text>}
+      </Flex>
+    </Card>
   )
 }
 
@@ -493,56 +607,61 @@ function FactQueue() {
 function Config({ storyId }) {
   const [models, setModels] = useState({})
   const [usage, setUsage] = useState([])
-  useEffect(() => { api.models().then(setModels); }, [])
+  useEffect(() => { api.models().then(setModels).catch(() => {}) }, [])
   useEffect(() => { if (storyId) api.usage(storyId).then(setUsage).catch(() => {}) }, [storyId])
-
   const save = async (role, model) => { await api.setModel(role, model); setModels(m => ({ ...m, [role]: model })) }
 
   return (
-    <div>
-      <div className="panel">
-        <h3>模型分级路由(ADR-0008 · 优先级:此处覆盖 &gt; 环境变量 &gt; 默认)</h3>
-        <table>
-          <thead><tr><th>Agent 角色</th><th>当前模型</th><th></th></tr></thead>
-          <tbody>
+    <Flex direction="column" gap="4" style={{ maxWidth: 820 }}>
+      <Card size="3">
+        <Flex direction="column" gap="3">
+          <Flex align="center" gap="2">
+            <GearIcon size={16} />
+            <Heading size="4">模型分级路由</Heading>
+          </Flex>
+          <Text size="1" color="gray">优先级:此处覆盖 &gt; 环境变量 &gt; 默认(强=glm-5 · 中/便宜=deepseek-v3 · embedding=qwen3.7)</Text>
+          <DataList.Root size="2">
             {Object.entries(models).map(([role, model]) => (
-              <tr key={role}>
-                <td className="mono">{role}</td>
-                <td><input defaultValue={model} style={{ width: 220 }}
-                  onBlur={e => e.target.value !== model && save(role, e.target.value)} /></td>
-                <td className="muted">失焦保存</td>
-              </tr>
+              <DataList.Item key={role} align="center">
+                <DataList.Label minWidth="110px">
+                  <Code size="1">{role}</Code>
+                </DataList.Label>
+                <DataList.Value>
+                  <TextField.Root size="1" defaultValue={model} style={{ width: 230 }}
+                    onBlur={e => e.target.value !== model && save(role, e.target.value)} />
+                </DataList.Value>
+              </DataList.Item>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </DataList.Root>
+        </Flex>
+      </Card>
       {storyId && (
-        <div className="panel">
-          <h3>用量(按 Agent · 分级路由实验数据源)</h3>
-          <div className="usage-grid">
-            {usage.map((u, i) => (
-              <div key={i} className="usage-card">
-                <b>{u.agent}</b> <span className="muted mono">{u.model}</span>
-                <div className="muted">调用 {u.calls} 次 · {u.tin || 0}+{u.tout || 0} tokens</div>
-                <div className="muted">{((u.latency || 0) / 1000).toFixed(1)}s 累计</div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <Card size="3">
+          <Flex direction="column" gap="3">
+            <Heading size="4">用量(按 Agent)</Heading>
+            <Flex gap="3" wrap="wrap">
+              {usage.map((u, i) => (
+                <Card key={i} size="2" variant="surface" style={{ width: 190 }}>
+                  <Flex direction="column" gap="1">
+                    <Text size="2" weight="bold">{u.agent}</Text>
+                    <Code size="1">{u.model}</Code>
+                    <Text size="1" color="gray">
+                      调用 {u.calls} 次 · {(u.tin || 0) + (u.tout || 0)} tokens
+                    </Text>
+                    <Text size="1" color="gray">{((u.latency || 0) / 1000).toFixed(1)}s 累计</Text>
+                  </Flex>
+                </Card>
+              ))}
+              {!usage.length && <Text size="2" color="gray">暂无调用</Text>}
+            </Flex>
+          </Flex>
+        </Card>
       )}
-    </div>
+    </Flex>
   )
 }
 
 /* ================= App ================= */
-const TABS = [
-  { key: 'library', label: '书库' },
-  { key: 'console', label: '生成' },
-  { key: 'reader', label: '阅读' },
-  { key: 'facts', label: '抽检' },
-  { key: 'config', label: '配置' },
-]
-
 export default function App() {
   const [route, setRoute] = useState(window.location.hash || '#/')
   const [tab, setTab] = useState('library')
@@ -559,24 +678,44 @@ export default function App() {
   }
 
   return (
-    <div className="app">
-      <div className="sidebar">
-        <h1><a href="#/" style={{ color: 'inherit', textDecoration: 'none' }}>小说 Agent</a></h1>
-        {TABS.map(t => (
-          <div key={t.key} className={'nav-item' + (tab === t.key ? ' active' : '')}
-            onClick={() => setTab(t.key)}>{t.label}</div>
+    <Flex style={{ minHeight: '100dvh' }} gap="0" align="stretch">
+      <Flex direction="column" gap="1" p="4" style={{
+        width: 208, flexShrink: 0, borderRight: '1px solid var(--gray-a5)',
+        position: 'sticky', top: 0, height: '100dvh',
+      }}>
+        <Heading size="4" style={{ marginBottom: 16 }}>
+          <a href="#/" style={{ color: 'inherit', textDecoration: 'none' }}>墨澜工作台</a>
+        </Heading>
+        {[
+          { key: 'library', label: '书库', icon: <BookOpenIcon size={15} /> },
+          { key: 'console', label: '生成', icon: <LightningIcon size={15} /> },
+          { key: 'reader', label: '阅读', icon: <BookOpenTextIcon size={15} /> },
+          { key: 'facts', label: '抽检', icon: <MagnifyingGlassIcon size={15} /> },
+          { key: 'config', label: '配置', icon: <GearIcon size={15} /> },
+        ].map(t => (
+          <Flex key={t.key} align="center" gap="2" px="3" py="2" style={{
+            borderRadius: 8, cursor: 'pointer', textDecoration: 'none',
+            background: tab === t.key ? 'var(--accent-a3)' : 'transparent',
+            color: tab === t.key ? 'var(--accent-11)' : 'var(--gray-11)',
+          }} onClick={() => setTab(t.key)}>
+            {t.icon}<Text size="2" weight={tab === t.key ? 'medium' : 'regular'}>{t.label}</Text>
+          </Flex>
         ))}
-        {storyId && <div className="muted" style={{ margin: '20px 16px' }}>当前书<br />{storyId.slice(0, 12)}…</div>}
-      </div>
-      <div className="main">
+        {storyId && (
+          <Text size="1" color="gray" style={{ marginTop: 24 }}>
+            当前书<br /><Code size="1">{storyId.slice(0, 14)}…</Code>
+          </Text>
+        )}
+      </Flex>
+      <Flex p="5" style={{ flex: 1, minWidth: 0, alignItems: 'flex-start' }}>
         {tab === 'library' && <Library onOpen={id => { setStoryId(id); setTab('console') }} />}
         {tab === 'console' && (storyId
           ? <Console storyId={storyId} />
-          : <div className="muted">先在书库创建/选择一本小说</div>)}
-        {tab === 'reader' && (storyId ? <Reader storyId={storyId} /> : <div className="muted">未选书</div>)}
+          : <Text color="gray">先在书库创建/选择一本小说</Text>)}
+        {tab === 'reader' && (storyId ? <Reader storyId={storyId} /> : <Text color="gray">未选书</Text>)}
         {tab === 'facts' && <FactQueue />}
         {tab === 'config' && <Config storyId={storyId} />}
-      </div>
-    </div>
+      </Flex>
+    </Flex>
   )
 }
