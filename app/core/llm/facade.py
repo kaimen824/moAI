@@ -123,6 +123,14 @@ class LLMFacade:
         trace_id = uuid.uuid4().hex[:16]
         started = time.perf_counter()
 
+        # 回放模式:override 命中则把整段内容切块 yield(零 token)
+        if self._response_override is not None:
+            resp = self._response_override(stage)
+            if resp is not None:
+                text = resp.content
+                return self._wrap_replay(text, role, route.model, trace_id, stage,
+                                         story_id, started)
+
         def _wrap(iterator: Iterator[str]) -> Iterator[str]:
             total_chars = 0
             try:
@@ -150,6 +158,26 @@ class LLMFacade:
                 temperature=route.temperature, max_tokens=max_tokens,
             )
         )
+
+    def _wrap_replay(
+        self, text: str, role: AgentRole, model: str, trace_id: str,
+        stage: str, story_id: str, started: float,
+    ) -> Iterator[str]:
+        """回放模式的流式输出:按 8 字符切块,结束后发埋点。"""
+        def _gen():
+            try:
+                for i in range(0, len(text), 8):
+                    yield text[i:i + 8]
+            finally:
+                latency_ms = int((time.perf_counter() - started) * 1000)
+                self._emit_usage(
+                    UsageRecord(
+                        agent=role.value, model=model, tokens_out=len(text) // 2,
+                        latency_ms=latency_ms, trace_id=trace_id,
+                        stage=stage, story_id=story_id,
+                    )
+                )
+        return _gen()
 
     def embed(
         self,

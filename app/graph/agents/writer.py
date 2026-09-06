@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.config import AgentRole
+from app.core.llm.base import ChatMessage
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
 
@@ -41,14 +42,23 @@ class WriterNode(BaseAgent):
     role = AgentRole.WRITER
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
-        draft = self.ask_text(
-            system=(
-                "你是小说执笔者。依据上下文写本章正文(1500-2500 字),要求:"
-                "严格遵守[角色已知事实]的视角边界——角色只知道列出的内容,不得出现角色不该知道的信息;"
-                "自然照应活跃伏笔;文风连贯。直接输出正文,不要标题和说明。"
-            ),
-            user=render_context(state),
-            stage="draft",
-            story_id=state.get("story_id", ""),
+        system = (
+            "你是小说执笔者。依据上下文写本章正文(1500-2500 字),要求:"
+            "严格遵守[角色已知事实]的视角边界——角色只知道列出的内容,不得出现角色不该知道的信息;"
+            "自然照应活跃伏笔;文风连贯。直接输出正文,不要标题和说明。"
         )
+        user = render_context(state)
+        # SSE 监听时逐 token 流式;否则一次性
+        if deps._event_queue is not None:
+            chunks: list[str] = []
+            for token in self.llm.stream(
+                self.role,
+                [ChatMessage("system", system), ChatMessage("user", user)],
+                stage="draft", story_id=state.get("story_id", ""),
+            ):
+                chunks.append(token)
+                deps.emit("token", {"text": token})
+            return {"draft": "".join(chunks)}
+        draft = self.ask_text(system, user, stage="draft",
+                              story_id=state.get("story_id", ""))
         return {"draft": draft}

@@ -7,12 +7,15 @@ CLI / API / 测试 复用同一引擎(ADR-0009:图与调用方解耦)。
 from __future__ import annotations
 
 import json
+import queue
 import re
 import sqlite3
+import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from app.core.llm.base import LLMResponse, UsageRecord
 from app.core.llm.facade import LLMFacade
@@ -35,6 +38,19 @@ class Deps:
     repo: Repository
     retrieval: RetrievalService
     llm: LLMFacade
+    # SSE 事件总线:写作 token 流等(单任务串行约束下,一次仅一个活跃队列)
+    _event_queue: "queue.Queue | None" = None
+    # 引擎级互斥:sqlite3 连接(check_same_thread=False)非线程安全,
+    # 图执行线程 / API 线程 / SSE 线程的所有 DB 访问经此锁串行化(单任务串行约束)
+    run_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def set_event_queue(self, q) -> None:
+        self._event_queue = q
+
+    def emit(self, kind: str, data: dict) -> None:
+        """节点发事件(stage/token/...);无监听时静默。"""
+        if self._event_queue is not None:
+            self._event_queue.put((kind, data))
 
     # ---- 节点辅助 ----
     def supervisor_ctx(self, story_id: str) -> AgentContext:
