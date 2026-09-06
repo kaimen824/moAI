@@ -19,10 +19,17 @@ function TemplateChips({ onPick }) {
       <Text size="1" color="gray">找灵感:</Text>
       {TEMPLATES.map(t => (
         <Tooltip key={t.tag} content={t.title}>
-          <Button size="1" variant="soft" color="gray" style={{ cursor: 'pointer' }}
-            onClick={() => onPick(t.tag)}>
-            {t.tag}
-          </Button>
+          <Text as="span" size="1" weight="medium" style={{
+            cursor: 'pointer', padding: '4px 12px', borderRadius: 999,
+            background: 'var(--accent-a3)', color: 'var(--accent-11)',
+            border: '1px solid var(--accent-a5)', userSelect: 'none',
+            transition: 'background .15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-a5)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'var(--accent-a3)'}
+          onClick={() => onPick(t.tag)}>
+            #{t.tag}
+          </Text>
         </Tooltip>
       ))}
     </Flex>
@@ -325,7 +332,7 @@ function Console({ storyId }) {
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   return (
-    <Flex direction="column" gap="4" style={{ width: '100%' }}>
+    <Flex direction="column" gap="4" style={{ width: '100%', minHeight: 'calc(100dvh - 56px)' }}>
       {/* 指令通道 */}
       <Card size="2">
         <Flex gap="3" align="center" wrap="wrap">
@@ -418,7 +425,7 @@ function Console({ storyId }) {
               <Badge color="gray" variant="soft">{draft.length} 字</Badge>
             </Flex>
             <Text as="div" size="3" ref={draftRef}
-              style={{ whiteSpace: 'pre-wrap', lineHeight: 2, minHeight: 240 }}>{draft}</Text>
+              style={{ whiteSpace: 'pre-wrap', lineHeight: 2.1, minHeight: '48vh' }}>{draft}</Text>
           </Flex>
         </Card>
       )}
