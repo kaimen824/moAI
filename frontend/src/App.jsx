@@ -108,9 +108,7 @@ function PayloadView({ payload }) {
   const textBlock = (label, v) => (
     <Flex key={label} direction="column" gap="1" style={{ marginBottom: 10 }}>
       <Text size="1" color="gray">{label}</Text>
-      <ScrollArea scrollbars="vertical" style={{ maxHeight: 190 }}>
-        <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap' }}>{v}</Text>
-      </ScrollArea>
+      <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{v}</Text>
     </Flex>
   )
   if (payload.world_settings) els.push(textBlock('世界观设定', payload.world_settings))
@@ -241,7 +239,9 @@ function Console({ storyId }) {
   const [directiveMsg, setDirectiveMsg] = useState('')
   const draftRef = useRef(null)
 
-  useEffect(() => { draftRef.current?.scrollTo(0, draftRef.current.scrollHeight) }, [draft])
+  useEffect(() => {
+    draftRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [draft])
 
   useEffect(() => {
     if (!running) return
@@ -325,7 +325,7 @@ function Console({ storyId }) {
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
 
   return (
-    <Flex direction="column" gap="4" style={{ maxWidth: 860 }}>
+    <Flex direction="column" gap="4" style={{ width: '100%', maxWidth: 1100 }}>
       {/* 指令通道 */}
       <Card size="2">
         <Flex gap="3" align="center" wrap="wrap">
@@ -417,9 +417,8 @@ function Console({ storyId }) {
               <Heading size="4">正文(实时流式)</Heading>
               <Badge color="gray" variant="soft">{draft.length} 字</Badge>
             </Flex>
-            <ScrollArea scrollbars="vertical" style={{ maxHeight: 440 }} ref={draftRef}>
-              <Text as="div" size="3" style={{ whiteSpace: 'pre-wrap', lineHeight: 2 }}>{draft}</Text>
-            </ScrollArea>
+            <Text as="div" size="3" ref={draftRef}
+              style={{ whiteSpace: 'pre-wrap', lineHeight: 2 }}>{draft}</Text>
           </Flex>
         </Card>
       )}
@@ -434,8 +433,8 @@ function Console({ storyId }) {
             </Flex>
 
             {(intr.outline || intr.stage_outline) && (
-              <ScrollArea scrollbars="vertical" style={{ maxHeight: 240 }}>
-                <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap' }}>
+              <ScrollArea scrollbars="vertical" style={{ maxHeight: '55vh' }}>
+                <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.9 }}>
                   {intr.outline || intr.stage_outline}
                 </Text>
               </ScrollArea>
