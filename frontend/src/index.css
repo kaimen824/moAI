@@ -1,10 +1,77 @@
-/* 工作台样式:Radix Themes 接管(暗色 + amber accent)。
-   landing 自带 landing.css,互不影响。 */
+/* 墨澜工作台样式:东方墨蓝主题(Radix indigo accent)。
+   动效语言与落地页(landing.css)同源:cubic-bezier(0.16,1,0.3,1) 出缓动、
+   克制的 fade+translate、prefers-reduced-motion 降级。 */
 
 body {
   margin: 0;
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
 }
 
+/* 正文阅读区:衬线 + 纸感(东方写作气质) */
+.reader-serif {
+  font-family: Georgia, "Noto Serif SC", "Source Han Serif SC", "SR Song", "SimSun", serif;
+  letter-spacing: 0.02em;
+}
+
 /* Radix 主题下正文阅读的排版微调 */
 .rt-Text[style] { max-width: none; }
+
+/* ================= 动效体系(与首页同源) ================= */
+:root { --ease-out: cubic-bezier(0.16, 1, 0.3, 1); }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 通用进入:卡片/面板挂载 */
+  .anim-in { animation: molan-in 0.45s var(--ease-out) both; }
+  @keyframes molan-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+  /* 时间线条目:从右侧轻滑入(新条目挂载) */
+  .proc-enter { animation: proc-in 0.35s var(--ease-out) both; }
+  @keyframes proc-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+
+  /* 中断卡:落定 + 琥珀呼吸描边(等待用户,呼吸 2.4s) */
+  .intr-card { animation: molan-in 0.5s var(--ease-out) both; }
+  .intr-card::after {
+    content: ''; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+    border: 1px solid var(--amber-a8); opacity: 0;
+    animation: intr-breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes intr-breathe { 0%, 100% { opacity: 0; } 50% { opacity: 0.8; } }
+
+  /* 稿件切换:正文淡入 */
+  .draft-swap { animation: molan-in 0.4s var(--ease-out) both; }
+
+  /* 运行中脉冲点 */
+  .pulse-dot { position: relative; }
+  .pulse-dot::after {
+    content: ''; position: absolute; inset: -4px; border-radius: 999px;
+    border: 1.5px solid var(--accent-a8);
+    animation: dot-ping 1.6s var(--ease-out) infinite;
+  }
+  @keyframes dot-ping { from { transform: scale(0.6); opacity: 1; } to { transform: scale(1.8); opacity: 0; } }
+
+  /* 侧栏/面板收展:宽度过渡 */
+  .panel-anim { transition: width 0.35s var(--ease-out), opacity 0.3s var(--ease-out); }
+
+  /* 封面卡片:hover 上浮 + 阴影加深 */
+  .cover-card { transition: transform 0.3s var(--ease-out), box-shadow 0.3s var(--ease-out); }
+  .cover-card:hover { transform: translateY(-4px); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-in, .proc-enter, .intr-card, .draft-swap, .panel-anim, .cover-card {
+    animation: none; transition: none;
+  }
+  .intr-card::after, .pulse-dot::after { display: none; }
+}
+
+/* 时间线紧凑行 hover */
+.proc-row { transition: background .12s; }
+.proc-row:hover { background: var(--gray-a3); }
+
+/* 书库封面:竖排书名 */
+.cover-title {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  letter-spacing: 0.35em;
+  font-family: Georgia, "Noto Serif SC", "SimSun", serif;
+}

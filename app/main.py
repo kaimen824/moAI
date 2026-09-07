@@ -87,6 +87,7 @@ _PAYLOAD_KEYS = (
     "fact_changes", "character_changes", "chapter_summary", "stage_summary",
     "thread_changes", "context_stats", "user_directives",
     "rewrite_exhausted", "stage_end_chapter", "stage_regen_count",
+    "chapter_no",            # 前端时间线按章分组的依据
 )
 
 
@@ -194,7 +195,10 @@ def create_story(req: CreateStory):
 @locked
 def list_stories():
     deps, _ = engine()
-    rows = deps.conn.execute("SELECT * FROM stories ORDER BY created_at DESC").fetchall()
+    rows = deps.conn.execute(
+        "SELECT s.*, (SELECT COUNT(*) FROM chapters c"
+        "  WHERE c.story_id = s.id AND c.status='active') AS chapter_count"
+        " FROM stories s ORDER BY s.created_at DESC").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -206,7 +210,8 @@ def story_detail(story_id: str):
     if not story:
         raise HTTPException(404, "story not found")
     chapters = deps.conn.execute(
-        "SELECT id, chapter_no, version_no, title, status, updated_at FROM chapters"
+        "SELECT id, chapter_no, version_no, title, status, updated_at,"
+        " length(content) AS clen FROM chapters"
         " WHERE story_id=? AND status='active' ORDER BY chapter_no", (story_id,)).fetchall()
     outline = deps.conn.execute(
         "SELECT content FROM outlines WHERE story_id=? AND status='confirmed'"
@@ -270,6 +275,46 @@ def get_chapter(story_id: str, chapter_no: int):
     if not row:
         raise HTTPException(404, "chapter not found")
     return dict(row)
+
+
+@app.get("/stories/{story_id}/codex")
+@locked
+def codex(story_id: str):
+    """设定集(Codex):角色卡 + 伏笔台账 + 当前有效世界记忆(排除被推翻/拒绝)。
+
+    facts 推翻链与 world 回放同口径:有后续版本指向即失效,任一时点只呈现有效记忆。
+    """
+    deps, _ = engine()
+    story = deps.conn.execute("SELECT main_branch_id FROM stories WHERE id=?",
+                              (story_id,)).fetchone()
+    if not story:
+        raise HTTPException(404, "story not found")
+    branch = story["main_branch_id"]
+    characters = deps.conn.execute(
+        "SELECT id, name, profile FROM characters WHERE story_id=? ORDER BY created_at",
+        (story_id,)).fetchall()
+    threads = deps.conn.execute(
+        "SELECT id, description, planted_chapter, resolved_chapter, status"
+        " FROM plot_threads WHERE story_id=? ORDER BY planted_chapter",
+        (story_id,)).fetchall()
+    facts = deps.conn.execute(
+        "SELECT f.type, f.content, f.chapter_established, f.confidence"
+        " FROM facts f"
+        " WHERE f.story_id=? AND f.branch_id=? AND f.status!='rejected'"
+        "   AND NOT EXISTS ("
+        "     SELECT 1 FROM facts g"
+        "     WHERE g.prev_version_id = f.id AND g.branch_id = f.branch_id)"
+        " ORDER BY f.chapter_established DESC, f.rowid DESC LIMIT 300",
+        (story_id, branch)).fetchall()
+    outline = deps.conn.execute(
+        "SELECT content FROM outlines WHERE story_id=? AND status='confirmed'"
+        " ORDER BY version_no DESC LIMIT 1", (story_id,)).fetchone()
+    return {
+        "characters": [dict(r) for r in characters],
+        "plot_threads": [dict(r) for r in threads],
+        "facts": [dict(r) for r in facts],
+        "outline": outline["content"] if outline else None,
+    }
 
 
 # ================= 抽检队列(E3)=================
