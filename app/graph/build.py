@@ -159,6 +159,7 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "beliefs": result.beliefs,
         "active_threads": result.active_threads,
         "expanded_entities": result.expanded_entities,
+        "vector_hits": result.vector_hits,     # 长尾召回(POV 同口径过滤)
     }
     bundle["carryover"] = deps.recent_carryover(state)
     # 用户指令通道:消费挂起的指示,注入本章上下文(最高优先级)

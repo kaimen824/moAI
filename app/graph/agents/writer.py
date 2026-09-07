@@ -38,6 +38,15 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
     if bundle.get("beliefs"):
         bl = "\n".join(f"- {b['content']}" for b in bundle["beliefs"])
         parts.append(f"[角色认知(可能包含误信)]\n{bl}")
+    if bundle.get("vector_hits"):
+        vh = "\n".join(
+            f"- [ch{h.get('chapter_established', '?')}] {h['content']}"
+            for h in bundle["vector_hits"][:5]
+        )
+        parts.append(
+            "[世界背景(按本章要点向量召回的远期客观事实——"
+            "可用于叙事描写;角色的言行与内心不得引用其中角色不该知晓的信息)]\n" + vh
+        )
     if bundle.get("active_threads"):
         th = "\n".join(f"- {t['description']}" for t in bundle["active_threads"])
         parts.append(f"[活跃伏笔]\n{th}")

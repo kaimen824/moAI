@@ -83,27 +83,65 @@ function PayloadDetail({ payload, t }) {
   )
 }
 
+/* 历史调用详情(落库截断快照,断电/重启后仍可回溯) */
+function HistoryDetail({ row, t }) {
+  const [tab, setTab] = useState('output')
+  return (
+    <Flex direction="column" gap="3">
+      <Flex gap="2" align="center" wrap="wrap">
+        <Badge color="indigo" variant="soft">{t.llm(row.stage)}</Badge>
+        <Code size="1">{row.agent}</Code>
+        <Code size="1">{row.model}</Code>
+        <Text size="1" color="gray">
+          {((row.latency_ms || 0) / 1000).toFixed(1)}s · ↑{row.tokens_in || 0} ↓{row.tokens_out || 0} tokens
+        </Text>
+        <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>{row.created_at?.replace('T', ' ')}</Text>
+      </Flex>
+      <Tabs.Root value={tab} onValueChange={setTab}>
+        <Tabs.List>
+          <Tabs.Trigger value="output">模型输出</Tabs.Trigger>
+          <Tabs.Trigger value="input">模型输入(快照,超长已截断)</Tabs.Trigger>
+        </Tabs.List>
+      </Tabs.Root>
+      <ScrollArea scrollbars="vertical" style={{ maxHeight: '62vh' }}>
+        <Text as="div" size="1" style={{
+          whiteSpace: 'pre-wrap', lineHeight: 1.75,
+          background: 'var(--gray-a2)', padding: '14px 16px', borderRadius: 8,
+          fontFamily: 'var(--code-font-family, monospace)',
+        }}>
+          {tab === 'output' ? (row.output_text || '(空)') : (row.input_text || '(空)')}
+        </Text>
+      </ScrollArea>
+    </Flex>
+  )
+}
+
 export default function TraceDrawer({ detail, onClose }) {
   const { t } = useApp()
   if (!detail) return null
-  const title = detail.kind === 'llm' ? t.llm(detail.llm.stage) : t.stage(detail.node)
+  const isHistory = !!detail.created_at     // 历史行(traces 落库快照)
+  const title = isHistory ? t.llm(detail.stage)
+    : detail.kind === 'llm' ? t.llm(detail.llm.stage) : t.stage(detail.node)
   return (
     <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
       <Dialog.Content maxWidth="80vw" style={{ maxWidth: '80vw' }}>
         <Flex align="center" gap="2" mb="3">
           <Dialog.Title>{title} · 详情</Dialog.Title>
           <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>
-            {new Date(detail.t).toLocaleTimeString('zh-CN', { hour12: false })}
+            {isHistory ? detail.created_at?.replace('T', ' ')
+              : new Date(detail.t).toLocaleTimeString('zh-CN', { hour12: false })}
           </Text>
         </Flex>
         <Dialog.Description size="1" color="gray" mb="3">
-          {detail.kind === 'llm'
-            ? '该次模型调用的完整输入上下文与输出——用于核对 AI 究竟"看到了什么、写了什么"'
-            : '该步骤的产出摘要'}
+          {isHistory ? '历史调用的落库快照(重启后仍可回溯;超长文本已截断)'
+            : detail.kind === 'llm'
+              ? '该次模型调用的完整输入上下文与输出——用于核对 AI 究竟"看到了什么、写了什么"'
+              : '该步骤的产出摘要'}
         </Dialog.Description>
-        {detail.kind === 'llm'
-          ? <LlmDetail call={detail.llm} t={t} />
-          : <PayloadDetail payload={detail.payload} t={t} />}
+        {isHistory ? <HistoryDetail row={detail} t={t} />
+          : detail.kind === 'llm'
+            ? <LlmDetail call={detail.llm} t={t} />
+            : <PayloadDetail payload={detail.payload} t={t} />}
       </Dialog.Content>
     </Dialog.Root>
   )

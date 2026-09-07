@@ -3,8 +3,9 @@ import {
   Badge, Card, Flex, ScrollArea, Spinner, Text, Tooltip,
 } from '@radix-ui/themes'
 import {
-  CaretDownIcon, CaretRightIcon, ActivityIcon,
+  CaretDownIcon, CaretRightIcon, ActivityIcon, ClockIcon,
 } from '@phosphor-icons/react'
+import { api } from '../api.js'
 import { useApp } from '../App.jsx'
 import TraceDrawer from './TraceDrawer.jsx'
 
@@ -54,12 +55,30 @@ function StageRow({ entry, t, onOpen }) {
   )
 }
 
+/* 历史 trace 紧凑行(服务重启后回看;输入输出为落库截断快照) */
+function TraceRow({ row, t, onOpen }) {
+  return (
+    <Flex className="proc-row" gap="2" align="center" px="2" py="1"
+      style={{ borderRadius: 6, cursor: 'pointer' }} onClick={() => onOpen(row)}>
+      <ClockIcon size={11} color="var(--gray-9)" style={{ flexShrink: 0 }} />
+      <Text size="1" weight="medium" style={{ flexShrink: 0 }}>{t.llm(row.stage)}</Text>
+      <Text size="1" color="gray" truncate style={{ minWidth: 0 }}>
+        {row.model} · {((row.latency_ms || 0) / 1000).toFixed(0)}s
+      </Text>
+      <Text size="1" color="gray" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10 }}>
+        {row.created_at?.slice(11, 19)}
+      </Text>
+    </Flex>
+  )
+}
+
 /* ================= 右栏:AI 工作过程(透明原则:每步实时可见) ================= */
-export default function ProcessPanel({ entries, running, onCollapse }) {
+export default function ProcessPanel({ entries, running, onCollapse, storyId }) {
   const { t } = useApp()
   const [detail, setDetail] = useState(null)
   const [filter, setFilter] = useState('all')
   const [collapsed, setCollapsed] = useState([])     // 已折叠的章组 key
+  const [history, setHistory] = useState(null)       // 历史调用(空态回看)
   const rootRef = useRef(null)
   const stickRef = useRef(true)
 
@@ -80,6 +99,14 @@ export default function ProcessPanel({ entries, running, onCollapse }) {
     vp.addEventListener('scroll', onScroll, { passive: true })
     return () => vp.removeEventListener('scroll', onScroll)
   }, [])
+
+  /* 空态回看:无实时条目且空闲时,加载该书历史调用(落库快照,断电也能回溯) */
+  useEffect(() => {
+    if (!storyId || running || entries.length || history) return
+    api.traces(storyId, 50).then(rows => {
+      setHistory({ items: rows.slice().reverse(), ts: Date.now() })
+    }).catch(() => setHistory({ items: [], ts: Date.now() }))
+  }, [storyId, running, entries.length, history])   // eslint-disable-line
 
   /* 按章分组;章内保留时序 */
   const groups = useMemo(() => {
@@ -173,11 +200,22 @@ export default function ProcessPanel({ entries, running, onCollapse }) {
                 </Flex>
               )
             })}
-            {!entries.length && (
+            {!entries.length && !history?.items?.length && (
               <Text size="1" color="gray" py="4">
                 开始写作后,AI 的每一步都会实时显示在这里——
                 规划、检索记忆、写作、审读,点开任意一步可查看模型的完整输入与输出。
               </Text>
+            )}
+            {!entries.length && history?.items?.length > 0 && (
+              <Flex direction="column" gap="1">
+                <Text size="1" color="gray" px="2" py="1">
+                  历史调用(最近 {history.items.length} 条,落库快照)——
+                  开始新的生成后切换为实时视图
+                </Text>
+                {history.items.map((row, i) => (
+                  <TraceRow key={i} row={row} t={t} onOpen={setDetail} />
+                ))}
+              </Flex>
             )}
             {running && (
               <Flex align="center" gap="2" px="2" py="2">

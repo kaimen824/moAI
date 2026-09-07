@@ -459,7 +459,8 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
           height: 'calc(100dvh - 24px)',
           alignSelf: 'flex-start',
         }}>
-          <ProcessPanel entries={entries} running={running} onCollapse={() => setRightOpen(false)} />
+          <ProcessPanel entries={entries} running={running} storyId={storyId}
+            onCollapse={() => setRightOpen(false)} />
         </Flex>
       ) : (
         <Tooltip content={`展开${t.processPanel}`} side="left">

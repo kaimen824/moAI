@@ -116,6 +116,13 @@ class RetrievalService:
         self, ctx: AgentContext, branch: str, query_text: str,
         *, exclude: set[str], top_k: int,
     ) -> list[dict]:
+        """长尾召回:embedding 相似度补 POV 查表漏掉的旧事实。
+
+        语义(与主路互补):pov_facts 管"角色所知"(可见性过滤);
+        兜底召回"世界客观长尾"(含无 visibility 行的背景/环境事实,
+        叙事素材)。POV 边界由 writer 渲染层区分语义来保障
+        (叙事可用、角色言行不得引用),不在本层过滤。
+        """
         try:
             qvec = self._embed_fn([query_text])[0]
         except Exception:

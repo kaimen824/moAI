@@ -237,11 +237,16 @@ def generate(story_id: str, req: GenerateRequest):
     if not story:
         raise HTTPException(404, "story not found")
     branch = req.branch_id or story["main_branch_id"]
+    # 共创输入组装:书名+一句话简介(建书时填的,审计#17:此前断在中途)
+    # + 题材标签 + 本次补充构想
+    premise_part = ""
+    if story["premise"]:
+        premise_part = f"书名:{story['title']}\n一句话简介:{story['premise']}\n"
     tags_part = ("题材标签:" + " ".join("#" + t for t in req.tags) + "\n") if req.tags else ""
     return _sse_run(
         {"story_id": story_id, "branch_id": branch,
          "target_chapters": req.target_chapters,
-         "initial_input": tags_part + req.initial_input},
+         "initial_input": premise_part + tags_part + req.initial_input},
         thread_id=story_id,
     )
 

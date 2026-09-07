@@ -306,3 +306,50 @@ retrieval_audit     检索审计(caller/query/返回条数/耗时)
 ## 附:实现期备忘
 
 摘要执行者(主控在定稿编排调用,便宜模型)/ 单本小说章节生成串行(SQLite 单写者,facts 写冲突防护)/ 检索按 branch_id 过滤 embedding / 中断点 B 用户改写循环不限次但成本可见化 / pending_review 抽检可与中断点 B 合并呈现亦可独立队列(实现时定交互形态)/ 量化指标操作性定义在 P3 定(一致性 rubric、伏笔回收率公式)/ 大纲 Agent 双评审模式(细纲评审 vs 成稿评审 prompt 分模式)/ 段落切分自然段优先 / thread_id 粒度 story+branch 一线程
+
+---
+
+## 附:实现状态对照(2026-09-07 审计,详见 AUDIT.md)
+
+> 设计全集 vs 实现子集的显式对账。落地页宣传的功能以此为准,避免承诺与实现脱节。
+
+### 已实现并投入使用
+
+- 三级记忆 / POV 投影 / facts-beliefs 分表 / 置信度分层 + 抽检队列 / facts 版本链推翻(含 setting 场景链)
+- 双评审 fan-out + 重写上限转人工(needs_user)/ 伏笔人工复核 / 三中断点
+- 分层摘要:chapter + **stage(实现期新增,补齐设计枚举)**;story_recap 多维回顾
+- 检索:结构化主路 + 向量兜底(embedding 已接入,含"世界背景"语义渲染)
+- 协作式中断(用户按钮)+ 循环自动中断(细纲 3 轮上限 + recursion_limit 兜底)
+- 全链路可观测:agent_traces 落库 + SSE 实时 + 历史回溯 UI
+- 评测:memory_eval / e2e_eval 报告可复现
+- C 端工作台:三栏 + 术语双模式(用户/开发者)+ 暗色 + 动效体系
+
+### 部分实现(语义有裁剪)
+
+| 模块 | 裁剪说明 |
+|---|---|
+| 短期记忆 | 设计"最近一章状态变化+结尾",实现为最近 2 章摘要 + 结尾 400 字 |
+| 大纲版本化 | 落库+归档,无回看旧版 UI |
+| 共创访谈 | 单发输入(tags+premise+构想),无多轮 |
+| belief 演化链 | 表结构就绪,抽取不产 supersede/dispell |
+
+### 未实现(表先建,功能未排期——空转表)
+
+temporal_relations(时间偏序)、entities/entity_links(Wiki 图)、paragraphs(段落下钻)、
+volume/book 摘要层、known_partial(部分知晓)
+
+### 明确降级(依赖或场景未到)
+
+IF 线番外(依赖章节版本化)、章节版本化改写(v2/stale 连锁)、Self-RAG、OTel 外部化
+
+### 实现期 ADR 补记
+
+**ADR-0013 编排层事务豁免仓储 ACL**:定稿落库(commit_finalize)为满足"编排原子性"
+(单事务、LLM 不进事务),绕过 Repository 写方法族直接执行 SQL。设计 §3.4 "仓储层私有、
+Agent 无旁路"由此降级为:**读路径(检索)fail-closed 强制;写路径由编排层单点自律,
+以 supervisor 权限语义执行**。repo 写方法族保留(测试与未来多 Agent 扩展用)。
+权衡:单事务完整性 > 每方法 ACL;风险由"每表单写者"不变式与审计日志兜底。
+
+**ADR-0014 向量兜底的世界背景语义**:兜底召回不做可见性过滤(区别于 POV 主路)——
+无 visibility 行的客观事实(环境/背景)正是长尾召回的目标;POV 边界由 writer 渲染层
+区分语义保障("世界背景:叙事可用,角色言行不得引用")。
