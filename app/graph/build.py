@@ -40,29 +40,21 @@ from app.memory.repository import AgentContext
 
 REWRITE_LIMIT = 3   # ADR-0007 裁决 4(可配置)
 STAGE_REGEN_LIMIT = 3        # 细纲重生成上限:超过自动转用户(行业惯例:escalate to human)
-STAGE_STUCK_RATIO = 0.85     # 相邻两版细纲相似度阈值:超过判定空转,自动转用户
-
-
-def _stage_stuck(state: GraphState) -> bool:
-    """重复检测(行业 Agent 的 repetition guard):重生成结果与上一版几乎相同,
-    说明评审-重生成循环在空转,继续只会烧 token。"""
-    from difflib import SequenceMatcher
-    prev, cur = state.get("prev_stage_outline", ""), state.get("stage_outline", "")
-    if not prev or not cur:
-        return False
-    return SequenceMatcher(None, prev, cur).ratio() > STAGE_STUCK_RATIO
 
 
 def _stage_escalation(state: GraphState) -> str | None:
-    """细纲循环自动中断原因(None=无需中断,继续 regen)。"""
+    """细纲循环自动中断原因(None=无需中断,继续 regen)。
+
+    注:不做相邻版本相似度检测——网文细纲重生成是"评审指出局部问题、
+    保留剧情骨架做局部修订",相邻版本高度相似是正常语义,不是空转;
+    空转风险由轮次上限兜底(所有者裁决)。
+    """
     verdict = state.get("outline_verdict", {}).get("verdict", "revise")
     if verdict not in ("revise", "block"):
         return None
     count = state.get("stage_regen_count", 1)
     if count >= STAGE_REGEN_LIMIT:
         return f"细纲已重生成 {count} 轮仍未通过评审,自动转交你裁决"
-    if _stage_stuck(state):
-        return "细纲重生成结果与上一版几乎相同(循环空转),自动转交你裁决"
     return None
 
 

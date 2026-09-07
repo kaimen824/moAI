@@ -199,26 +199,26 @@ def test_e2e_stage_boundary_by_outline_range(engine, monkeypatch):
 
 
 def test_e2e_stage_loop_auto_escalates(engine, monkeypatch):
-    """自动中断(重复检测):重生成细纲与上一版几乎相同 -> 空转判定,转用户裁决。"""
+    """自动中断语义(所有者裁决):细纲相似不打断(网文局部修订是正常语义),
+    即使每版完全相同,也由轮次上限(3轮)兜底转人工,而非相似度检测。"""
     monkeypatch.setitem(SCRIPTS, "review_stage_outline",
                         {"verdict": "revise",
                          "scores": {"consistency": 5, "structure": 5}, "feedback": "不行"})
-    # stage_outline 脚本固定 -> 第2次生成结果与第1次完全相同(空转实锤)
+    # stage_outline 脚本固定 -> 每轮生成结果完全相同(相似度 1.0)
     graph, deps, conn = engine
-    story_id, branch = deps.repo.create_story("空转检测", "测试")
+    story_id, branch = deps.repo.create_story("相似不打断", "测试")
     cfg = {"configurable": {"thread_id": "e2e-stuck"}}
 
     graph.invoke({"story_id": story_id, "branch_id": branch,
                   "target_chapters": 1, "initial_input": "x"}, cfg)   # 中断 0
     result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
-    # 第1轮:regen_count=1 < 3,prev 为空不判空转 -> 回炉重生成
-    # 第2轮:新旧两版相同 -> stuck -> 自动转 confirm_stage(带 escalation)
+    # 固定脚本跑满 3 轮生成,由轮次上限触发转人工(而非相似度提前拦)
     while result.get("__interrupt__", [{}])[0].value.get("type") != "confirm_stage_outline":
         result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
     intr = result["__interrupt__"][0].value
     assert intr["type"] == "confirm_stage_outline"
-    assert intr["escalation"] and "空转" in intr["escalation"]
-    assert intr["regen_count"] >= 2
+    assert intr["escalation"] and "3 轮" in intr["escalation"]
+    assert intr["regen_count"] == 3            # 相似不打断:跑满上限而非第2轮拦截
 
 
 def test_e2e_stage_regen_limit_escalates(tmp_path, monkeypatch):

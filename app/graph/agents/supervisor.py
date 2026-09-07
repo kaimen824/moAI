@@ -95,9 +95,7 @@ class StageOutlineNode(BaseAgent):
             stage="stage_outline",
             story_id=state.get("story_id", ""),
         )
-        return {"stage_outline": outline,
-                "prev_stage_outline": state.get("stage_outline", ""),
-                "is_stage_first": True,
+        return {"stage_outline": outline, "is_stage_first": True,
                 "stage_start_chapter": done + 1,
                 "stage_end_chapter": deps.parse_stage_range(outline, start=done + 1),
                 "stage_regen_count": state.get("stage_regen_count", 0) + 1}
