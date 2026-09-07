@@ -46,6 +46,7 @@ SCRIPTS: dict[str, str | dict] = {
     "update_characters": {"updates": [
         {"name": "沈砚", "profile_append": "觉醒了感应古碑的能力"}]},
     "chapter_summary": "暴雨夜沈砚发现古碑,力量初醒。",
+    "stage_summary": "阶段聚合:沈砚发现古碑并觉醒力量,踏上离村旅途。",
 }
 
 
@@ -184,6 +185,39 @@ def test_e2e_stage_boundary_by_outline_range(engine, monkeypatch):
     # ch3 超出细纲范围 -> 重新生成阶段细纲 -> 中断 A(而非直接切片写第3章)
     intr = result["__interrupt__"][0].value
     assert intr["type"] == "confirm_stage_outline"
+
+    # 分层记忆:ch2 为阶段末章 -> 阶段聚合摘要已落库(layer='stage')
+    stage_rows = conn.execute(
+        "SELECT chapter_no, content FROM chapter_summaries WHERE layer='stage'").fetchall()
+    assert stage_rows and stage_rows[0]["chapter_no"] == 2
+    # recap 分层拼装:早期聚合段 + 当前阶段全量段(含 ch2)+ 细纲进度段
+    recap = deps.story_recap({"story_id": story_id, "chapter_no": 3,
+                              "stage_start_chapter": 2,
+                              "stage_outline": "1| 发现古碑\n2| 力量觉醒\n3| 离村远行"})
+    assert "当前阶段" in recap and "细纲进度" in recap
+    assert "已写完" in recap and "待写" in recap
+
+
+def test_e2e_agent_traces_recorded(engine):
+    """全节点可观测:LLM 调用的输入/输出快照落 agent_traces。"""
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("观测测试", "测试")
+    cfg = {"configurable": {"thread_id": "e2e-trace"}}
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x"}, cfg)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)
+
+    rows = conn.execute(
+        "SELECT agent, stage, input_text, output_text FROM agent_traces"
+        " WHERE story_id=? ORDER BY created_at", (story_id,)).fetchall()
+    assert len(rows) >= 6                      # 共创/角色/大纲/评审/细纲/切片/草稿/评审/抽取/摘要
+    stages = {r["stage"] for r in rows}
+    assert {"coauthor", "master_outline", "draft", "extract_facts"} <= stages
+    draft_row = next(r for r in rows if r["stage"] == "draft")
+    assert draft_row["input_text"] and "system" in draft_row["input_text"]
+    assert draft_row["output_text"]             # 输入输出快照齐全
 
 
 def test_e2e_rewrite_exhausted_notifies_user(engine, monkeypatch):

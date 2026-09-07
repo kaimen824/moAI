@@ -85,6 +85,7 @@ def confirm_stage_outline(state: GraphState, deps: Deps) -> dict:
         "type": "confirm_stage_outline",
         "stage_outline": state.get("stage_outline", ""),
         "review": state.get("outline_verdict", {}),
+        "regen_count": state.get("stage_regen_count", 1),
     })
     return {"user_input": decision,
             "chapter_no": (state.get("chapters_done", 0) + 1)}
@@ -106,8 +107,12 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
         "conflicts": state.get("fact_changes", {}).get("conflicts", []),
         "rewrite_exhausted": state.get("rewrite_exhausted", False),
     })
-    return {"user_input": decision,
-            "thread_changes": decision.get("threads", [])}   # 人工确认后的伏笔变更
+    update = {"user_input": decision,
+              "thread_changes": decision.get("threads", [])}   # 人工确认后的伏笔变更
+    if decision.get("action") == "revise":
+        # 用户意见驱动的重写独立计数:重置,不与自动重写共享上限
+        update.update({"rewrite_count": 0, "rewrite_exhausted": False})
+    return update
 
 
 # ---------- 检索 / 合并 / 定稿 ----------
@@ -201,8 +206,10 @@ def next_chapter(state: GraphState, deps: Deps) -> dict:
     done = state.get("chapters_done", 0)
     stage_end = state.get("stage_end_chapter", 0)
     is_stage_first = (done + 1 > stage_end) or not state.get("stage_outline")
-    return {"chapter_no": done + 1, "is_stage_first": is_stage_first,
-            "rewrite_count": 0, "rewrite_exhausted": False}
+    reset = {"rewrite_count": 0, "rewrite_exhausted": False}
+    if is_stage_first:
+        reset["stage_regen_count"] = 0          # 新阶段:细纲轮次重新计
+    return {"chapter_no": done + 1, "is_stage_first": is_stage_first, **reset}
 
 
 def route_chapter_entry(state: GraphState) -> str:

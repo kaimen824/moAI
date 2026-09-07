@@ -84,8 +84,9 @@ class FactReview(BaseModel):
 _PAYLOAD_KEYS = (
     "world_settings", "character_drafts", "master_outline", "stage_outline",
     "chapter_brief", "outline_review", "quality_review", "merged_verdict",
-    "fact_changes", "character_changes", "chapter_summary", "thread_changes",
-    "context_stats", "user_directives",
+    "fact_changes", "character_changes", "chapter_summary", "stage_summary",
+    "thread_changes", "context_stats", "user_directives",
+    "rewrite_exhausted", "stage_end_chapter", "stage_regen_count",
 )
 
 
@@ -335,6 +336,19 @@ def usage(story_id: str):
         " SUM(latency_ms) latency FROM usage_log WHERE story_id=? GROUP BY agent, model",
         (story_id,)).fetchall()
     return [dict(r) for r in by_agent]
+
+
+@app.get("/stories/{story_id}/traces")
+@locked
+def traces(story_id: str, limit: int = 100):
+    """全节点调用回溯:LLM 输入/输出快照(会话恢复/事后诊断)。"""
+    deps, _ = engine()
+    rows = deps.conn.execute(
+        "SELECT agent, model, stage, input_text, output_text,"
+        " tokens_in, tokens_out, latency_ms, created_at"
+        " FROM agent_traces WHERE story_id=? ORDER BY created_at DESC LIMIT ?",
+        (story_id, min(limit, 500))).fetchall()
+    return [dict(r) for r in rows]
 
 
 @app.get("/stories/{story_id}/reviews")

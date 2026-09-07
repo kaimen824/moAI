@@ -96,7 +96,9 @@ class StageOutlineNode(BaseAgent):
             story_id=state.get("story_id", ""),
         )
         return {"stage_outline": outline, "is_stage_first": True,
-                "stage_end_chapter": deps.parse_stage_range(outline, start=done + 1)}
+                "stage_start_chapter": done + 1,
+                "stage_end_chapter": deps.parse_stage_range(outline, start=done + 1),
+                "stage_regen_count": state.get("stage_regen_count", 0) + 1}
 
 
 @register_agent
@@ -127,16 +129,42 @@ class ChapterSliceNode(BaseAgent):
 
 @register_agent
 class SummaryNode(BaseAgent):
-    """章摘要(便宜模型,定稿管道步骤)。"""
+    """章摘要(便宜模型,定稿管道步骤)。
+
+    分层记忆(ADR-0003 长篇扩展):定稿章为阶段末章时,追加生成该阶段的
+    聚合摘要(layer='stage')——供 story_recap 以"早期聚合+近期全量"
+    拼装,防止长篇上下文膨胀。
+    """
 
     name = "supervisor"
     role = AgentRole.SUMMARY
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
+        story_id = state.get("story_id", "")
+        chapter_no = state.get("chapter_no", 0)
         summary = self.ask_text(
             system="用 100-150 字概括本章:主要事件、角色状态变化、留下的悬念。直接输出摘要。",
             user=state.get("draft", "")[:6000],
             stage="chapter_summary",
-            story_id=state.get("story_id", ""),
+            story_id=story_id,
         )
-        return {"chapter_summary": summary}
+        update: dict = {"chapter_summary": summary}
+        stage_end = state.get("stage_end_chapter", 0)
+        stage_start = state.get("stage_start_chapter", 0)
+        if stage_end and chapter_no >= stage_end:
+            chapter_summaries = deps.stage_chapter_summaries(
+                story_id, stage_start, upto=chapter_no)
+            if chapter_summaries:
+                merged = self.ask_text(
+                    system=(
+                        "你是连载小说的阶段记忆压缩器。把给定的一系列章节摘要聚合为"
+                        "一份阶段摘要(300-500 字):主线推进、关键转折、各角色阶段性"
+                        "状态、阶段结束时仍未回收的伏笔。只写已发生的事实,"
+                        "不得虚构后续剧情。直接输出摘要。"
+                    ),
+                    user="\n".join(f"第{no}章:{text}" for no, text in chapter_summaries),
+                    stage="stage_summary",
+                    story_id=story_id,
+                )
+                update["stage_summary"] = merged
+        return update

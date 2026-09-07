@@ -38,6 +38,7 @@ class Deps:
     repo: Repository
     retrieval: RetrievalService
     llm: LLMFacade
+    embed_fn: object = None              # texts -> vectors(定稿时为 facts/摘要算 embedding)
     # SSE 事件总线:按 story(thread)隔离的广播 + 历史(刷新/断线后前端可恢复流程)
     _subscribers: list = field(default_factory=list)   # [(thread_id, queue)]
     _history: list = field(default_factory=list)       # [(kind, data, thread_id)] 全局环形,按 thread 过滤
@@ -130,21 +131,68 @@ class Deps:
         parts.append(f"上一章结尾原文:{rows[0]['tail'] or ''}")
         return "\n".join(parts)
 
-    def story_recap(self, state: dict) -> str:
-        """已完成剧情回顾:全部定稿章摘要序列(细纲生成/评审的防重排基准)。"""
-        story_id = state.get("story_id", "")
-        chapter_no = state.get("chapter_no", 1)
+    def stage_chapter_summaries(self, story_id: str, stage_start: int, *,
+                                upto: int) -> list[tuple[int, str]]:
+        """当前阶段内(>=stage_start, <=upto)的定稿章摘要序列。"""
         rows = self.repo.conn.execute(
             "SELECT s.chapter_no, s.content FROM chapter_summaries s"
             " JOIN chapters c ON c.story_id = s.story_id AND c.chapter_no = s.chapter_no"
             "   AND c.status='active' AND c.branch_id = s.branch_id"
-            " WHERE s.story_id=? AND s.layer='chapter' AND s.chapter_no < ?"
+            " WHERE s.story_id=? AND s.layer='chapter'"
+            "   AND s.chapter_no >= ? AND s.chapter_no <= ?"
             " ORDER BY s.chapter_no",
-            (story_id, chapter_no),
+            (story_id, stage_start, upto),
         ).fetchall()
-        if not rows:
+        return [(r["chapter_no"], r["content"] or "") for r in rows]
+
+    def story_recap(self, state: dict) -> str:
+        """已完成剧情回顾(分层记忆,防长篇上下文膨胀):
+
+        - 更早阶段:各阶段聚合摘要(layer='stage',每条截 400 字)
+        - 当前阶段:全量章摘要(细纲单元粒度,3-6 章,保真)
+        - 细纲进度:当前细纲行中已写完/待写的章号(防重排锚点)
+        stage_start 缺失(旧 checkpoint)时兜底为最近 10 章。
+        """
+        story_id = state.get("story_id", "")
+        chapter_no = state.get("chapter_no", 1)
+        stage_start = state.get("stage_start_chapter", 0)
+        if stage_start <= 0:   # 旧状态兜底:最近 10 章视为"当前阶段"
+            stage_start = max(chapter_no - 10, 1)
+
+        stage_rows = self.repo.conn.execute(
+            "SELECT s.chapter_no, s.content FROM chapter_summaries s"
+            " WHERE s.story_id=? AND s.layer='stage' AND s.chapter_no < ?"
+            " ORDER BY s.chapter_no",
+            (story_id, stage_start),
+        ).fetchall()
+        chapter_rows = self.stage_chapter_summaries(story_id, stage_start, upto=chapter_no - 1)
+
+        if not stage_rows and not chapter_rows:
             return "(尚无已完成章节)"
-        return "\n".join(f"- 第{r['chapter_no']}章:{(r['content'] or '')[:200]}" for r in rows)
+
+        parts: list[str] = []
+        if stage_rows:
+            parts.append("[早期剧情(阶段聚合)]")
+            parts.extend(f"- (至第{r['chapter_no']}章){(r['content'] or '')[:400]}"
+                         for r in stage_rows)
+        if chapter_rows:
+            parts.append(f"[当前阶段(第{stage_start}章起,全量)]")
+            parts.extend(f"- 第{no}章:{text[:200]}" for no, text in chapter_rows)
+
+        # 细纲进度指针:已写完的细纲行 vs 待写(防重排的直接锚点)
+        outline = state.get("stage_outline", "")
+        if outline:
+            done_lines, todo_lines = [], []
+            for line in outline.splitlines():
+                m = re.match(rf"\s*[-*]?\s*第?(\d+)[章|、|\s]", line)
+                if not m:
+                    continue
+                (done_lines if int(m.group(1)) < chapter_no else todo_lines).append(line.strip())
+            if done_lines or todo_lines:
+                parts.append("[当前细纲进度(已完成行严禁重写)]")
+                parts.extend(f"  已写完: {l}" for l in done_lines[:8])
+                parts.extend(f"  待写:   {l}" for l in todo_lines[:8])
+        return "\n".join(parts)
 
     def parse_stage_range(self, stage_outline: str, *, start: int) -> int:
         """解析细纲覆盖的末章章号(阶段边界);解析不出时保守取 start+2。"""
@@ -235,6 +283,26 @@ class Deps:
         chapter_no = state["chapter_no"]
         changes = state.get("fact_changes", {})
         chapter_id = uuid.uuid4().hex
+
+        # 事务外预计算 embedding(facts 去重后的内容 + 章摘要);
+        # 失败降级为 None——不阻塞定稿,仅损失向量检索能力
+        emb_contents: list[str] = [f.get("content", "").strip()
+                                   for f in changes.get("facts", [])]
+        emb_contents.append(state.get("chapter_summary", ""))
+        emb_vecs: list[bytes | None] = [None] * len(emb_contents)
+        if self.embed_fn is not None:
+            try:
+                texts = [t for t in emb_contents if t]
+                if texts:
+                    vectors = self.embed_fn(texts) or []
+                    vi = 0
+                    for i, t in enumerate(emb_contents):
+                        if t and vi < len(vectors) and vectors[vi]:
+                            emb_vecs[i] = encode_embedding(vectors[vi])
+                            vi += 1
+            except Exception:
+                emb_vecs = [None] * len(emb_contents)
+
         try:
             self.run_lock.acquire()   # 显式事务:跨越整个 BEGIN..COMMIT 的临界区
             self.conn.execute("BEGIN")
@@ -248,7 +316,7 @@ class Deps:
             )
             # 2) facts + visibility(精确去重:同分支同内容已存在则跳过)
             fact_ids: list[str] = []
-            for f in changes.get("facts", []):
+            for i, f in enumerate(changes.get("facts", [])):
                 content = (f.get("content") or "").strip()
                 if not content:
                     continue
@@ -270,7 +338,7 @@ class Deps:
                      self._fact_supersede_target(story_id, branch, f, chapter_no),
                      f.get("confidence", "high"),
                      "pending_review" if f.get("confidence") == "low" else "confirmed",
-                     None, _now()),
+                     emb_vecs[i] if i < len(emb_vecs) else None, _now()),
                 )
                 for cid in f.get("visible_ids", []):
                     self.conn.execute(
@@ -324,13 +392,21 @@ class Deps:
                             " WHERE id=?",
                             (status, chapter_no if action != "advance" else None, _now(), row["id"]),
                         )
-            # 6) 章摘要(检索索引)
+            # 6) 章摘要(检索索引)+ 阶段聚合摘要(分层记忆)
+            summary_vec = emb_vecs[-1] if emb_vecs else None
             self.conn.execute(
                 "INSERT INTO chapter_summaries (id, story_id, chapter_no, layer, content,"
                 " branch_id, embedding, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 (uuid.uuid4().hex, story_id, chapter_no, "chapter",
-                 state.get("chapter_summary", ""), branch, None, _now()),
+                 state.get("chapter_summary", ""), branch, summary_vec, _now()),
             )
+            if state.get("stage_summary"):
+                self.conn.execute(
+                    "INSERT INTO chapter_summaries (id, story_id, chapter_no, layer, content,"
+                    " branch_id, embedding, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, story_id, chapter_no, "stage",
+                     state["stage_summary"], branch, None, _now()),
+                )
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -347,6 +423,8 @@ def build_engine(db_path: str | Path, llm: LLMFacade | None = None,
     返回 (deps, conn);deps.checkpointer 已构建并与引擎锁绑定——
     全部 DB 访问(repo 方法 / usage sink / checkpointer / API 端点)
     共用 deps.run_lock 做短临界区互斥。
+    embed_fn 未注入且 facade 可用时,默认包装 facade.embed——
+    向量兜底与定稿 embedding 不再静默降级。
     """
     conn = init_db(db_path)
     facade = llm or LLMFacade()
@@ -354,9 +432,31 @@ def build_engine(db_path: str | Path, llm: LLMFacade | None = None,
     repo = Repository(conn, lock=deps.run_lock)
     deps.repo = repo
     facade.set_usage_sink(make_usage_sink(conn, deps.run_lock))
+    # 全节点可观测:每次 LLM 调用 -> SSE agent_call 事件(实时)+ agent_traces 落库(回溯)
+    def _trace_sink(rec: dict) -> None:
+        deps.emit("agent_call", rec)
+        with deps.run_lock:
+            conn.execute(
+                "INSERT INTO agent_traces (id, story_id, agent, model, stage, input_text,"
+                " output_text, tokens_in, tokens_out, latency_ms, trace_id, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, rec.get("story_id", ""), rec.get("agent", ""),
+                 rec.get("model", ""), rec.get("stage", ""),
+                 "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in rec.get("input", []))[:4000],
+                 (rec.get("output", "") or "")[:8000],
+                 rec.get("tokens_in", 0), rec.get("tokens_out", 0),
+                 rec.get("latency_ms", 0), rec.get("trace_id", ""), _now()),
+            )
+            conn.commit()
+    facade.set_trace_sink(_trace_sink)
     from langgraph.checkpoint.sqlite import SqliteSaver
     saver = SqliteSaver(conn)
     saver.lock = deps.run_lock          # saver 内部锁替换为引擎锁:与 repo/sink 互斥
     deps.checkpointer = saver
+    if embed_fn is None:
+        def _embed(texts):
+            return facade.embed(list(texts)).vectors
+        embed_fn = _embed
+    deps.embed_fn = embed_fn
     deps.retrieval = RetrievalService(repo, embed_fn=embed_fn)
     return deps, conn

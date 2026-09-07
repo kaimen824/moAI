@@ -24,7 +24,9 @@ class GraphState(TypedDict, total=False):
     chapter_no: int
     is_stage_first: bool
     stage_outline: str            # 阶段细纲(首章生成并确认)
+    stage_start_chapter: int      # 当前细纲覆盖的起始章号
     stage_end_chapter: int        # 当前细纲覆盖的末章章号(阶段边界)
+    stage_regen_count: int        # 当前阶段细纲的生成轮次(可观测:循环空转告警)
     chapter_brief: str            # 本章要点(阶段细纲切片)
     present_characters: list[str] # 本章在场角色(character id)
 
@@ -42,6 +44,7 @@ class GraphState(TypedDict, total=False):
     character_changes: list[dict] # 角色卡更新
     thread_changes: list[dict]    # 伏笔变更(审校建议,人工已确认)
     chapter_summary: str
+    stage_summary: str            # 阶段末章时的聚合摘要(layer='stage')
     chapter_id: str
 
     # ---- 中断恢复的用户输入 ----

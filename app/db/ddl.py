@@ -217,6 +217,22 @@ CREATE TABLE IF NOT EXISTS usage_log (
   created_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_traces (      -- 全节点可观测:LLM 输入/输出快照
+  id          TEXT PRIMARY KEY,
+  story_id    TEXT,
+  agent       TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  stage       TEXT,
+  input_text  TEXT,                            -- 截断快照(role: content 序列化)
+  output_text TEXT,                            -- 截断快照
+  tokens_in   INTEGER,
+  tokens_out  INTEGER,
+  latency_ms  INTEGER,
+  trace_id    TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_traces_story ON agent_traces(story_id, created_at);
+
 CREATE TABLE IF NOT EXISTS retrieval_audit (
   id            TEXT PRIMARY KEY,
   story_id      TEXT,
@@ -244,5 +260,6 @@ ALL_TABLES = [
     "plot_threads", "temporal_relations",
     "entities", "entity_links",
     "agent_acl",
-    "review_results", "usage_log", "retrieval_audit", "user_directives",
+    "review_results", "usage_log", "agent_traces", "retrieval_audit",
+    "user_directives",
 ]

@@ -19,6 +19,8 @@ from app.core.llm.base import (
 from app.core.llm.factory import ProviderFactory, build_default_factory
 
 UsageSink = Callable[[UsageRecord], None]
+# TraceSink:全节点可观测——每次 LLM 调用完成后收到完整输入/输出快照
+TraceSink = Callable[[dict], None]
 
 
 class LLMFacade:
@@ -37,6 +39,7 @@ class LLMFacade:
         self._factory = factory
         self._usage_sink = usage_sink
         self._response_override = response_override
+        self._trace_sink: TraceSink | None = None
 
     # ---- 内部 ----
     def _get_factory(self) -> ProviderFactory:
@@ -49,6 +52,27 @@ class LLMFacade:
 
     def set_usage_sink(self, sink: UsageSink | None) -> None:
         self._usage_sink = sink
+
+    def set_trace_sink(self, sink: TraceSink | None) -> None:
+        self._trace_sink = sink
+
+    def _emit_trace(
+        self, *, agent: str, model: str, stage: str, story_id: str,
+        messages: Sequence[ChatMessage], output: str,
+        tokens_in: int, tokens_out: int, latency_ms: int, trace_id: str,
+    ) -> None:
+        if self._trace_sink is None:
+            return
+        try:
+            self._trace_sink({
+                "agent": agent, "model": model, "stage": stage, "story_id": story_id,
+                "input": [{"role": m.role, "content": m.content} for m in messages],
+                "output": output,
+                "tokens_in": tokens_in, "tokens_out": tokens_out,
+                "latency_ms": latency_ms, "trace_id": trace_id,
+            })
+        except Exception:   # 观测失败不影响主流程
+            pass
 
     def _emit_usage(self, record: UsageRecord) -> None:
         if self._usage_sink is not None:
@@ -78,12 +102,19 @@ class LLMFacade:
             resp = self._response_override(stage)
             if resp is not None:
                 resp.model = route.model
+                latency_ms = int((time.perf_counter() - started) * 1000)
                 self._emit_usage(
                     UsageRecord(
                         agent=role.value, model=route.model,
-                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        latency_ms=latency_ms,
                         trace_id=trace_id, stage=stage, story_id=story_id,
                     )
+                )
+                self._emit_trace(
+                    agent=role.value, model=route.model, stage=stage, story_id=story_id,
+                    messages=messages, output=resp.content,
+                    tokens_in=0, tokens_out=0,
+                    latency_ms=latency_ms, trace_id=trace_id,
                 )
                 return resp
         client = self._get_factory().chat_client(route.provider)
@@ -106,6 +137,12 @@ class LLMFacade:
                 stage=stage,
                 story_id=story_id,
             )
+        )
+        self._emit_trace(
+            agent=role.value, model=route.model, stage=stage, story_id=story_id,
+            messages=messages, output=resp.content,
+            tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
+            latency_ms=latency_ms, trace_id=trace_id,
         )
         return resp
 
@@ -135,23 +172,38 @@ class LLMFacade:
                                          story_id, started)
 
         def _wrap(iterator: Iterator[str]) -> Iterator[str]:
-            total_chars = 0
+            parts: list[str] = []
             try:
                 for chunk in iterator:
-                    total_chars += len(chunk)
+                    parts.append(chunk)
                     yield chunk
             finally:
                 latency_ms = int((time.perf_counter() - started) * 1000)
+                # 优先取 provider 精确 usage(stream_options.include_usage);
+                # 不可得时按字符数粗估(//2,保守值)
+                usage = getattr(client, "last_usage", None)
+                if usage:
+                    tokens_in, tokens_out = usage
+                else:
+                    tokens_in = sum(len(m.content) for m in messages) // 2
+                    tokens_out = sum(len(p) for p in parts) // 2
                 self._emit_usage(
                     UsageRecord(
                         agent=role.value,
                         model=route.model,
-                        tokens_out=total_chars // 2,   # 粗估,无精确 usage
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
                         latency_ms=latency_ms,
                         trace_id=trace_id,
                         stage=stage,
                         story_id=story_id,
                     )
+                )
+                self._emit_trace(
+                    agent=role.value, model=route.model, stage=stage, story_id=story_id,
+                    messages=messages, output="".join(parts),
+                    tokens_in=tokens_in, tokens_out=tokens_out,
+                    latency_ms=latency_ms, trace_id=trace_id,
                 )
 
         client = self._get_factory().chat_client(route.provider)

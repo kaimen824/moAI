@@ -121,8 +121,15 @@ class RetrievalService:
         except Exception:
             return []
         rows = self._repo.conn.execute(
-            "SELECT id, type, content, chapter_established, embedding FROM facts"
-            " WHERE story_id=? AND branch_id=? AND embedding IS NOT NULL",
+            # 与 world 回放口径一致:排除被推翻(有后续版本)与已拒绝的事实,
+            # 防止向量召回失效信息
+            "SELECT f.id, f.type, f.content, f.chapter_established, f.embedding"
+            " FROM facts f"
+            " WHERE f.story_id=? AND f.branch_id=? AND f.embedding IS NOT NULL"
+            "   AND f.status!='rejected'"
+            "   AND NOT EXISTS ("
+            "     SELECT 1 FROM facts g"
+            "     WHERE g.prev_version_id = f.id AND g.branch_id = f.branch_id)",
             (ctx.story_id, branch),
         ).fetchall()
         scored: list[tuple[float, dict]] = []

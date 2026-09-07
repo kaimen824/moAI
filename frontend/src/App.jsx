@@ -129,6 +129,64 @@ const PIPELINE = ['coauthor', 'gen_master_outline', 'stage_outline', 'write_draf
 const PIPELINE_LABELS = { coauthor: '共创', gen_master_outline: '大纲', stage_outline: '细纲',
   write_draft: '写作', merge_reviews: '评审', user_review_chapter: '审阅', finalize: '定稿' }
 
+/* LLM 调用阶段中文名(全节点可观测) */
+const LLM_STAGE_LABELS = {
+  coauthor: '共创世界观', master_outline: '总大纲', review_master_outline: '总大纲评审',
+  stage_outline: '阶段细纲', review_stage_outline: '细纲评审', chapter_slice: '本章要点切片',
+  draft: '正文写作', review_draft_outline: '成稿大纲评审', review_quality: '质量审校',
+  extract_facts: '事实抽取', update_characters: '角色卡更新', chapter_summary: '章摘要',
+  stage_summary: '阶段聚合摘要', init_characters: '角色设计', embed: '向量化',
+}
+
+/* 单次 LLM 调用卡片:模型/耗时/tokens,可展开输入输出全文 */
+function LlmCallCard({ call }) {
+  const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState('output')
+  const inTok = call.tokens_in || 0, outTok = call.tokens_out || 0
+  return (
+    <Card size="1" variant="surface" style={{ borderLeft: '3px solid var(--accent-a7)' }}>
+      <Flex direction="column" gap="1">
+        <Flex align="center" gap="2" wrap="wrap" style={{ cursor: 'pointer' }}
+          onClick={() => setOpen(o => !o)}>
+          <Text size="1" weight="bold" color="accent">
+            ⚙ {LLM_STAGE_LABELS[call.stage] || call.stage || '模型调用'}
+          </Text>
+          <Badge color="gray" variant="soft" size="1">{call.agent}</Badge>
+          <Code size="1">{call.model}</Code>
+          <Text size="1" color="gray">
+            {((call.latency_ms || 0) / 1000).toFixed(1)}s · ↑{inTok} ↓{outTok} tokens
+          </Text>
+          <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>
+            {open ? '收起 ▴' : '详情 ▾'}
+          </Text>
+        </Flex>
+        {open && (
+          <Flex direction="column" gap="2" pt="2">
+            <Flex gap="2">
+              <Tabs.Root value={tab} onValueChange={setTab} size="1">
+                <Tabs.List>
+                  <Tabs.Trigger value="output">输出</Tabs.Trigger>
+                  <Tabs.Trigger value="input">输入</Tabs.Trigger>
+                </Tabs.List>
+              </Tabs.Root>
+            </Flex>
+            <ScrollArea scrollbars="vertical" style={{ maxHeight: '46vh' }}>
+              <Text as="div" size="1" style={{
+                whiteSpace: 'pre-wrap', lineHeight: 1.7, fontFamily: 'var(--code-font-family, monospace)',
+                background: 'var(--gray-a2)', padding: '10px 12px', borderRadius: 6,
+              }}>
+                {tab === 'output'
+                  ? (call.output || '(空)')
+                  : (call.input || []).map((m, i) => `【${m.role}】\n${m.content}`).join('\n\n———\n\n')}
+              </Text>
+            </ScrollArea>
+          </Flex>
+        )}
+      </Flex>
+    </Card>
+  )
+}
+
 function PayloadView({ payload }) {
   if (!payload || !Object.keys(payload).length) return null
   const els = []
@@ -186,8 +244,8 @@ function PayloadView({ payload }) {
     <Flex key="mv" gap="2" align="center">
       <Text size="1" color="gray">汇总裁决</Text>
       <Badge color={payload.merged_verdict === 'pass' ? 'grass'
-        : payload.merged_verdict === 'forced_pass' ? 'red' : 'amber'}>
-        {payload.merged_verdict}
+        : payload.merged_verdict === 'needs_user' ? 'red' : 'amber'}>
+        {payload.merged_verdict === 'needs_user' ? 'needs_user(转交用户)' : payload.merged_verdict}
       </Badge>
     </Flex>
   )
@@ -279,6 +337,7 @@ function Console({ storyId }) {
 
   const onEvent = (kind, data) => {
     if (kind === 'stage') setStages(s => [...s, { node: data.node, t: Date.now(), payload: data.payload || {} }])
+    else if (kind === 'agent_call') setStages(s => [...s, { node: `llm:${data.stage}`, t: Date.now(), llm: data }])
     else if (kind === 'token') setDraft(d => d + (data.text || ''))
     else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)); setRunning(false) }
     else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成') }
@@ -498,7 +557,7 @@ function Console({ storyId }) {
                 {(intr.outline_review?.feedback || intr.quality_review?.feedback) && (
                   <Text size="1" color="gray">
                     大纲评审 {intr.outline_review?.verdict} · 质量审校 {intr.quality_review?.verdict}
-                    {intr.forced_pass && <Text size="1" color="red" weight="bold"> · ⚠ 强制通过(已达重写上限)</Text>}
+                    {intr.rewrite_exhausted && <Text size="1" color="red" weight="bold"> · ⚠ 已达重写上限仍未通过,由你裁决:定稿或继续修改</Text>}
                   </Text>
                 )}
                 {(intr.thread_changes || []).length > 0 && (
@@ -540,7 +599,9 @@ function Console({ storyId }) {
               <ListIcon size={16} />
               <Heading size="4">节点产出</Heading>
             </Flex>
-            {stages.map((s, i) => (
+            {stages.map((s, i) => s.llm ? (
+              <LlmCallCard key={i} call={s.llm} />
+            ) : (
               <Card key={i} size="2" variant="surface">
                 <Flex direction="column" gap="2">
                   <Flex align="center" gap="2">

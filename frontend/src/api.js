@@ -52,6 +52,7 @@ export const api = {
   pendingFacts: () => j("/facts/pending"),
   reviewFact: (fid, approve) => j(`/facts/${fid}/review`, { method: "POST", body: JSON.stringify({ approve }) }),
   usage: (id) => j(`/stories/${id}/usage`),
+  traces: (id, limit = 100) => j(`/stories/${id}/traces?limit=${limit}`),
   models: () => j("/config/models"),
   setModel: (role, model) => j("/config/models", { method: "POST", body: JSON.stringify({ role, model }) }),
 };
