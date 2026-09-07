@@ -22,13 +22,18 @@ class QualityReviewNode(BaseAgent):
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
         bundle = state.get("context_bundle", {})
-        world_lines = "\n".join(f"- {f['content']}" for f in bundle.get("pov_facts", []))
+        world_lines = "\n".join(
+            f"- [ch{f.get('chapter_established', '?')}] {f['content']}"
+            for f in bundle.get("pov_facts", [])
+        )
         threads = "\n".join(f"- {t['description']}({t['status']})"
                             for t in bundle.get("active_threads", []))
         review = self.ask_json(
             _SYSTEM,
             f"[本章草稿]\n{state.get('draft','')[:5000]}\n\n"
-            f"[世界已知事实(校验基准)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}",
+            f"[上期衔接(草稿若重演其中已发生事件,一致性记低分)]\n"
+            f"{bundle.get('carryover', '')}\n\n"
+            f"[世界已知事实(校验基准,标注章号)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}",
             stage="review_quality",
             story_id=state.get("story_id", ""),
         )

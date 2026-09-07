@@ -24,6 +24,7 @@ class GraphState(TypedDict, total=False):
     chapter_no: int
     is_stage_first: bool
     stage_outline: str            # 阶段细纲(首章生成并确认)
+    stage_end_chapter: int        # 当前细纲覆盖的末章章号(阶段边界)
     chapter_brief: str            # 本章要点(阶段细纲切片)
     present_characters: list[str] # 本章在场角色(character id)
 
@@ -33,8 +34,8 @@ class GraphState(TypedDict, total=False):
     rewrite_count: int
     outline_review: dict          # 大纲 Agent 成稿裁决
     quality_review: dict          # 审校裁决(含伏笔变更建议)
-    merged_verdict: str           # pass | revise | block | forced_pass
-    forced_pass: bool
+    merged_verdict: str           # pass | revise | block | needs_user
+    rewrite_exhausted: bool       # 达重写上限仍未通过 -> 交用户裁决
 
     # ---- 定稿(编排原子性:暂存变更集)----
     fact_changes: list[dict]      # 事件管理抽取(facts/beliefs/visibility)

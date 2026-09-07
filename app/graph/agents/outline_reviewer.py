@@ -47,6 +47,8 @@ class ReviewStageOutline(BaseAgent):
             _SYSTEM,
             f"[评审对象] 阶段细纲\n{state.get('stage_outline','')}\n\n"
             f"[基准] 总大纲\n{state.get('master_outline','')}\n\n"
+            f"[已完成剧情回顾(细纲不得与其中事件重复,重复即 revise)]\n"
+            f"{deps.story_recap(state)}\n\n"
             f"[已完成]{state.get('chapters_done',0)} 章",
             stage="review_stage_outline",
             story_id=state.get("story_id", ""),
@@ -67,7 +69,9 @@ class ReviewDraftOutline(BaseAgent):
             _SYSTEM.replace('"structure":0-10', '"fidelity":0-10'),
             f"[评审对象] 本章正文草稿\n{state.get('draft','')[:5000]}\n\n"
             f"[基准] 本章要点\n{state.get('chapter_brief','')}\n\n"
-            f"[基准] 总大纲(当前卷)\n{state.get('master_outline','')[:1500]}",
+            f"[基准] 总大纲(当前卷)\n{state.get('master_outline','')[:1500]}\n\n"
+            f"[上期衔接(若草稿重演/复述其中已发生事件,判 revise)]\n"
+            f"{deps.recent_carryover(state)}",
             stage="review_draft_outline",
             story_id=state.get("story_id", ""),
         )

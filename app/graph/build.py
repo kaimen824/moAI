@@ -6,7 +6,8 @@
   中断点 B:章节审阅     resume {"action": "confirm|revise",
                                 "feedback": str,
                                 "threads": [被人工确认的伏笔变更]}
-双评审 fan-out/fan-in;重写上限 3(可配);forced_pass 显式降级。
+双评审 fan-out/fan-in;重写上限 3(可配);达上限不自动降级——
+rewrite_exhausted 交用户裁决(needs_user)。
 """
 
 from __future__ import annotations
@@ -90,7 +91,11 @@ def confirm_stage_outline(state: GraphState, deps: Deps) -> dict:
 
 
 def user_review_chapter(state: GraphState, deps: Deps) -> dict:
-    """中断点 B:章节审阅 + 伏笔人工二次确认(ADR-0007)。"""
+    """中断点 B:章节审阅 + 伏笔人工二次确认(ADR-0007)。
+
+    rewrite_exhausted=True 表示已达重写上限且评审仍未通过——
+    由用户裁决:带着评审意见定稿(confirm)或再改写(revise)。
+    """
     decision = interrupt({
         "type": "user_review_chapter",
         "chapter_no": state.get("chapter_no"),
@@ -99,7 +104,7 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
         "quality_review": state.get("quality_review", {}),
         "thread_changes": state.get("quality_review", {}).get("thread_changes", []),
         "conflicts": state.get("fact_changes", {}).get("conflicts", []),
-        "forced_pass": state.get("forced_pass", False),
+        "rewrite_exhausted": state.get("rewrite_exhausted", False),
     })
     return {"user_input": decision,
             "thread_changes": decision.get("threads", [])}   # 人工确认后的伏笔变更
@@ -142,17 +147,21 @@ def build_context(state: GraphState, deps: Deps) -> dict:
 
 
 def merge_reviews(state: GraphState, deps: Deps) -> dict:
-    """fan-in:双 pass 才通过;block 优先;计数达上限 forced_pass(ADR-0007)。"""
+    """fan-in:双 pass 才通过;达重写上限不再自动通过——转交用户裁决(needs_user)。"""
     o = state.get("outline_review", {})
     q = state.get("quality_review", {})
     verdicts = [v.get("verdict", "revise") for v in (o, q)]
     if all(v == "pass" for v in verdicts):
-        return {"merged_verdict": "pass", "forced_pass": False}
+        return {"merged_verdict": "pass", "rewrite_exhausted": False}
     count = state.get("rewrite_count", 0)
     if count + 1 >= REWRITE_LIMIT:
-        return {"merged_verdict": "forced_pass", "forced_pass": True,
+        deps.log_review(state, reviewer="merge", forced=True,
+                        verdict={"verdict": "needs_user",
+                                 "feedback": "已达重写上限,评审仍未通过,转交用户裁决"},
+                        round_no=count + 1)
+        return {"merged_verdict": "needs_user", "rewrite_exhausted": True,
                 "rewrite_count": count + 1}
-    return {"merged_verdict": "revise", "forced_pass": False,
+    return {"merged_verdict": "revise", "rewrite_exhausted": False,
             "rewrite_count": count + 1}
 
 
@@ -160,7 +169,7 @@ def route_after_merge(state: GraphState) -> str:
     v = state.get("merged_verdict", "revise")
     if v == "revise":
         return "rewrite"
-    return "user_review"       # pass / forced_pass 均交用户
+    return "user_review"       # pass / needs_user 均交用户
 
 
 def route_after_review(state: GraphState) -> str:
@@ -184,11 +193,16 @@ def route_next(state: GraphState) -> str:
 
 
 def next_chapter(state: GraphState, deps: Deps) -> dict:
-    """进入下一章:阶段边界判定(总大纲的卷结构;简化:每 3 章一个新阶段)。"""
+    """进入下一章:阶段边界以细纲实际覆盖范围(stage_end_chapter)为准。
+
+    旧版按 done % 3 硬切导致卷结构失真与剧情重排,改为:
+    下一章超出当前阶段范围(或尚无细纲)才重新生成阶段细纲。
+    """
     done = state.get("chapters_done", 0)
-    is_stage_first = (done % 3 == 0) or not state.get("stage_outline")
+    stage_end = state.get("stage_end_chapter", 0)
+    is_stage_first = (done + 1 > stage_end) or not state.get("stage_outline")
     return {"chapter_no": done + 1, "is_stage_first": is_stage_first,
-            "rewrite_count": 0, "forced_pass": False}
+            "rewrite_count": 0, "rewrite_exhausted": False}
 
 
 def route_chapter_entry(state: GraphState) -> str:

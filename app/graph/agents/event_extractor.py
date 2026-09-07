@@ -12,10 +12,18 @@ from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 _SYSTEM = (
     "你是叙事事实抽取器。从章节正文中抽取客观世界事实与角色认知,严格按 JSON 输出:\n"
     '{"facts":[{"content":"事实陈述","type":"event|state|setting|relation",'
-    '"confidence":"high|low","visible_to":["角色名",...]}],\n'
+    '"confidence":"high|low","visible_to":["角色名",...],'
+    '"supersedes":"被本章取代的已知事实内容(仅 state/setting 类,可空)"}],\n'
     '"beliefs":[{"character":"角色名","content":"该角色以为...(可为误信)"}],\n'
     '"conflicts":[{"description":"与已知事实的矛盾"}]}\n'
-    "规则:只抽正文明确陈述的(显式 -> confidence=high);需要推断的隐含信息 -> low;"
+    "规则:\n"
+    "1. 语义分层:event=一次性过往事件(发生过即不变);state=持续状态"
+    "(可被后续章节的新状态取代,此时填 supersedes);setting=场景级环境"
+    "(时间/天气/地点氛围,随场景切换失效,新场景的 setting 应 supersede 旧 setting);"
+    "relation=人物/势力间关系。\n"
+    "2. 与[已知事实]语义相同或高度相近的事实不要重复抽取;本章内容若只是"
+    "重演已知事件,也不得再次入库。\n"
+    "3. 只抽正文明确陈述的(显式 -> confidence=high);需要推断的隐含信息 -> low;"
     "visible_to 为正文中知晓该事实的角色名;与[已知事实]矛盾的抽到 conflicts。"
 )
 
@@ -27,11 +35,14 @@ class EventExtractNode(BaseAgent):
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
         bundle = state.get("context_bundle", {})
-        known = "\n".join(f"- {f['content']}" for f in bundle.get("pov_facts", [])[:30])
+        known = "\n".join(
+            f"- [ch{f.get('chapter_established', '?')}] {f['content']}"
+            for f in bundle.get("pov_facts", [])[:30]
+        )
         result = self.ask_json(
             _SYSTEM,
             f"[第{state.get('chapter_no', 0)}章正文]\n{state.get('draft','')[:6000]}\n\n"
-            f"[已知事实(用于冲突检测)]\n{known or '(本章之前无)'}",
+            f"[已知事实(用于去重/取代/冲突检测)]\n{known or '(本章之前无)'}",
             stage="extract_facts",
             story_id=state.get("story_id", ""),
         )

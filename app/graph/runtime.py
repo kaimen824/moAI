@@ -113,21 +113,44 @@ class Deps:
         return AgentContext("supervisor", story_id)
 
     def recent_carryover(self, state: dict) -> str:
-        """短期记忆:最近 active 章的结尾原文 + 摘要(ADR-0003)。"""
+        """短期记忆:最近 2 章摘要 + 上一章结尾原文(ADR-0003)。"""
         story_id = state.get("story_id", "")
         chapter_no = state.get("chapter_no", 1)
         rows = self.repo.conn.execute(
-            "SELECT c.title, substr(c.content, -400) AS tail, s.content AS summary"
+            "SELECT c.chapter_no, substr(c.content, -400) AS tail, s.content AS summary"
             " FROM chapters c LEFT JOIN chapter_summaries s"
             "   ON s.story_id = c.story_id AND s.chapter_no = c.chapter_no AND s.layer='chapter'"
             " WHERE c.story_id=? AND c.status='active' AND c.chapter_no < ?"
-            " ORDER BY c.chapter_no DESC LIMIT 1",
+            " ORDER BY c.chapter_no DESC LIMIT 2",
             (story_id, chapter_no),
         ).fetchall()
         if not rows:
             return "(本书第一章)"
-        r = rows[0]
-        return f"上一章摘要:{r['summary'] or ''}\n上一章结尾:{r['tail'] or ''}"
+        parts = [f"上一章(ch{r['chapter_no']})摘要:{r['summary'] or ''}" for r in reversed(rows)]
+        parts.append(f"上一章结尾原文:{rows[0]['tail'] or ''}")
+        return "\n".join(parts)
+
+    def story_recap(self, state: dict) -> str:
+        """已完成剧情回顾:全部定稿章摘要序列(细纲生成/评审的防重排基准)。"""
+        story_id = state.get("story_id", "")
+        chapter_no = state.get("chapter_no", 1)
+        rows = self.repo.conn.execute(
+            "SELECT s.chapter_no, s.content FROM chapter_summaries s"
+            " JOIN chapters c ON c.story_id = s.story_id AND c.chapter_no = s.chapter_no"
+            "   AND c.status='active' AND c.branch_id = s.branch_id"
+            " WHERE s.story_id=? AND s.layer='chapter' AND s.chapter_no < ?"
+            " ORDER BY s.chapter_no",
+            (story_id, chapter_no),
+        ).fetchall()
+        if not rows:
+            return "(尚无已完成章节)"
+        return "\n".join(f"- 第{r['chapter_no']}章:{(r['content'] or '')[:200]}" for r in rows)
+
+    def parse_stage_range(self, stage_outline: str, *, start: int) -> int:
+        """解析细纲覆盖的末章章号(阶段边界);解析不出时保守取 start+2。"""
+        nums = [int(m) for m in re.findall(r"第?(\d+)[章|、|\s]", stage_outline)]
+        nums = [n for n in nums if n >= start]
+        return max(nums) if nums else start + 2
 
     def extract_stage_line(self, stage_outline: str, chapter_no: int) -> str:
         """从阶段细纲提取本章行(确定性切片;兜底返回整份细纲)。"""
@@ -153,7 +176,12 @@ class Deps:
             ids.append(cid)
         return ids
 
-    def log_review(self, state: dict, *, reviewer: str, verdict: dict, round_no: int) -> None:
+    def log_review(self, state: dict, *, reviewer: str, verdict: dict, round_no: int,
+                   forced: bool | None = None) -> None:
+        # forced=None:读 state 中的 rewrite_exhausted(评审节点);
+        # 显式传入:merge 等在标志写入前落审计的调用方。
+        if forced is None:
+            forced = bool(state.get("rewrite_exhausted"))
         with self.run_lock:
             self.conn.execute(
                 "INSERT INTO review_results (id, story_id, chapter_no, round_no, reviewer,"
@@ -163,11 +191,42 @@ class Deps:
                  round_no, reviewer, verdict.get("verdict", "revise"),
                  json.dumps(verdict.get("scores", {}), ensure_ascii=False),
                  verdict.get("feedback", ""),
-                 1 if state.get("forced_pass") else 0, _now()),
+                 1 if forced else 0, _now()),
             )
             self.conn.commit()
 
     # ---- 定稿:编排原子性落库(单事务,ADR-0003 写链路)----
+    def _fact_supersede_target(self, story_id: str, branch: str, f: dict,
+                               chapter_no: int) -> str | None:
+        """求新事实的 prev_version_id(推翻链):
+        ① LLM 显式 supersedes(模糊匹配已知事实,取最近一条);
+        ② setting 类兜底:接在当前仍有效的最新 setting 链尾之后,
+           保证任一时点只有最新场景环境生效(时间线不回漂)。
+        """
+        sup = (f.get("supersedes") or "").strip()
+        if sup:
+            row = self.conn.execute(
+                "SELECT id FROM facts WHERE story_id=? AND branch_id=?"
+                " AND chapter_established<? AND content LIKE ?"
+                " AND status!='rejected' ORDER BY chapter_established DESC LIMIT 1",
+                (story_id, branch, chapter_no, f"%{sup[:24]}%"),
+            ).fetchone()
+            if row:
+                return row["id"]
+        if f.get("type") == "setting":
+            row = self.conn.execute(
+                # 仍有效 = 没有任何后续版本指向它(NOT EXISTS,与 world 回放口径一致)
+                "SELECT f.id, f.chapter_established FROM facts f"
+                " LEFT JOIN facts g ON g.prev_version_id = f.id"
+                " WHERE f.story_id=? AND f.branch_id=? AND f.type='setting'"
+                "   AND f.status!='rejected' AND g.id IS NULL"
+                " ORDER BY f.chapter_established DESC LIMIT 1",
+                (story_id, branch),
+            ).fetchone()
+            if row:
+                return row["id"]
+        return None
+
     def commit_finalize(self, state: dict) -> str:
         """定稿 DB 事务:章节 + 事实/认知/可见性 + 伏笔 + 摘要,一次提交。
         失败整体回滚,世界状态零污染。"""
@@ -187,17 +246,29 @@ class Deps:
                 (chapter_id, story_id, chapter_no, 1,
                  f"第{chapter_no}章", state.get("draft", ""), "active", branch, _now(), _now()),
             )
-            # 2) facts + visibility
+            # 2) facts + visibility(精确去重:同分支同内容已存在则跳过)
             fact_ids: list[str] = []
             for f in changes.get("facts", []):
+                content = (f.get("content") or "").strip()
+                if not content:
+                    continue
+                dup = self.conn.execute(
+                    "SELECT id FROM facts WHERE story_id=? AND branch_id=?"
+                    " AND content=? AND status!='rejected' LIMIT 1",
+                    (story_id, branch, content),
+                ).fetchone()
+                if dup:
+                    continue     # 语义去重由抽取层负责;此处拦精确重复
                 fid = uuid.uuid4().hex
                 fact_ids.append(fid)
                 self.conn.execute(
                     "INSERT INTO facts (id, story_id, type, content, chapter_established,"
                     " branch_id, prev_version_id, confidence, status, embedding, created_at)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (fid, story_id, f.get("type", "event"), f.get("content", ""),
-                     chapter_no, branch, None, f.get("confidence", "high"),
+                    (fid, story_id, f.get("type", "event"), content,
+                     chapter_no, branch,
+                     self._fact_supersede_target(story_id, branch, f, chapter_no),
+                     f.get("confidence", "high"),
                      "pending_review" if f.get("confidence") == "low" else "confirmed",
                      None, _now()),
                 )

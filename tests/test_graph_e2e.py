@@ -164,3 +164,93 @@ def test_e2e_revision_loop_and_user_rewrite(engine):
     assert result.get("chapters_done") == 1
     usage = conn.execute("SELECT COUNT(*) c FROM usage_log").fetchone()["c"]
     assert usage >= 12     # 多了一轮 draft + 双评审
+
+
+def test_e2e_stage_boundary_by_outline_range(engine, monkeypatch):
+    """阶段边界以细纲覆盖章号为准:细纲只到第2章 -> 第3章重新走细纲+确认。"""
+    monkeypatch.setitem(SCRIPTS, "stage_outline",
+                        "1| 山村暴雨,沈砚发现古碑|沈砚,白芷|异象开启\n"
+                        "2| 古碑力量觉醒|沈砚|力量觉醒")
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("阶段边界测试", "测试")
+    cfg = {"configurable": {"thread_id": "e2e-stage"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 3, "initial_input": "x"}, cfg)   # 中断 0
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)          # 中断 A(细纲1-2)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)          # 中断 B(ch1)
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)  # ch2 中断 B
+    result = graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)
+    # ch3 超出细纲范围 -> 重新生成阶段细纲 -> 中断 A(而非直接切片写第3章)
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "confirm_stage_outline"
+
+
+def test_e2e_rewrite_exhausted_notifies_user(engine, monkeypatch):
+    """重写达上限不自动强制通过:needs_user 中断携带 rewrite_exhausted,交用户裁决。"""
+    monkeypatch.setitem(SCRIPTS, "review_draft_outline",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "fidelity": 5},
+                         "feedback": "剧情与上一章重复"})
+    monkeypatch.setitem(SCRIPTS, "review_quality",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "foreshadow": 5, "style": 5},
+                         "feedback": "重复", "thread_changes": []})
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("上限测试", "测试")
+    cfg = {"configurable": {"thread_id": "e2e-exhaust"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x"}, cfg)   # 中断 0
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)          # 中断 A
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg) # 3轮重写后 -> 中断 B
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "user_review_chapter"
+    assert intr["rewrite_exhausted"] is True           # 明确告知用户已达上限
+
+    # 用户裁决 confirm -> 仍可定稿(带评审意见)
+    result = graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)
+    assert result.get("chapters_done") == 1
+    # 审计:转交用户时 merge 写入 needs_user 记录(重写耗尽痕迹)
+    rows = conn.execute(
+        "SELECT reviewer, verdict, forced_pass FROM review_results"
+        " ORDER BY created_at").fetchall()
+    assert rows[-1]["reviewer"] == "merge"
+    assert rows[-1]["verdict"] == "needs_user"
+    assert rows[-1]["forced_pass"] == 1
+
+
+def test_commit_finalize_dedup_and_setting_chain(tmp_path):
+    """定稿落库:精确去重 + setting 推翻链(任一时点只有最新场景环境有效)。"""
+    from app.memory.world import replay_world
+
+    facade = LLMFacade(response_override=lambda stage: None)
+    deps, conn = build_engine(tmp_path / "facts.db", llm=facade)
+    story_id, branch = deps.repo.create_story("事实测试", "测试")
+    base = {"story_id": story_id, "branch_id": branch, "draft": "正文"}
+
+    deps.commit_finalize({**base, "chapter_no": 1, "fact_changes": {"facts": [
+        {"content": "夕阳如血,染红大楼", "type": "setting", "confidence": "high",
+         "visible_ids": []},
+        {"content": "沈砚击败了黑衣人", "type": "event", "confidence": "high",
+         "visible_ids": []},
+    ]}})
+    deps.commit_finalize({**base, "chapter_no": 2, "fact_changes": {"facts": [
+        {"content": "沈砚击败了黑衣人", "type": "event", "confidence": "high",
+         "visible_ids": []},                       # 精确重复 -> 跳过
+        {"content": "夜色如墨,压在城市上空", "type": "setting", "confidence": "high",
+         "visible_ids": []},                       # 新场景 -> 推翻 ch1 setting
+    ]}})
+
+    facts = conn.execute("SELECT content FROM facts").fetchall()
+    assert len(facts) == 3                          # 无重复入库
+
+    snap1 = replay_world(conn, story_id, branch, upto_chapter=1)
+    contents1 = {f["content"] for f in snap1.facts}
+    assert "夕阳如血,染红大楼" in contents1         # ch1 时点:旧环境有效
+    assert "夜色如墨,压在城市上空" not in contents1
+
+    snap2 = replay_world(conn, story_id, branch, upto_chapter=2)
+    contents2 = {f["content"] for f in snap2.facts}
+    assert "夜色如墨,压在城市上空" in contents2      # ch2 时点:新环境有效
+    assert "夕阳如血,染红大楼" not in contents2      # 旧环境已失效,时间线不回漂

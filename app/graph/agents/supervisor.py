@@ -36,14 +36,24 @@ class GenMasterOutline(BaseAgent):
     role = AgentRole.SUPERVISOR
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
-        n = state.get("target_chapters", 6)
+        n = max(state.get("target_chapters", 6), 6)
         outline = self.ask_text(
             system=(
-                f"你是小说总大纲架构师。基于世界观设定产出总大纲(markdown):"
-                f"全书主线、分卷结构(每卷 3-5 章,共规划约 {n} 章)、"
-                f"每卷一行卷名+核心事件+阶段目标。简洁,总长不超过 600 字。"
+                "你是长篇连载网文的总大纲架构师。按网文体量规划——全书数百章、"
+                "数百万字,分卷推进,每卷 30-100+ 章。基于世界观设定产出总大纲"
+                "(markdown),总长 2500-4000 字,必须包含:\n"
+                "1. 全书主线、核心卖点/金手指、力量与升级体系、结局走向;\n"
+                "2. 分卷结构(至少规划 4 卷直到结局):卷标题行必须标注章节范围,"
+                "如'**第一卷 山村异变(第1-80章)**';\n"
+                "3. 分层展开:前两卷(近期就要写的)每卷列 8-12 个按顺序的阶段性"
+                "事件(具体到'谁做了什么、导致什么',写明因果衔接)与卷末钩子;"
+                "之后的卷各给 2-4 句卷级走向;\n"
+                "4. 主要角色的成长弧线各一行。\n"
+                "近期卷的阶段性事件是后续细纲切片的直接依据,宁可具体勿空泛;"
+                "远期卷只需锁住大方向,留给后续展开。"
             ),
             user=(state.get("world_settings", "")
+                  + f"\n\n[近期写作目标]本次先写约 {n} 章,大纲前两卷需覆盖到该进度之后。"
                   + ("\n\n[用户对上一版大纲的修改意见] " + state["user_input"]["feedback"]
                      if isinstance(state.get("user_input"), dict)
                      and state["user_input"].get("action") == "revise" else "")),
@@ -55,26 +65,38 @@ class GenMasterOutline(BaseAgent):
 
 @register_agent
 class StageOutlineNode(BaseAgent):
-    """阶段细纲(阶段首章):总大纲的当前卷展开为各章要点。"""
+    """阶段细纲(阶段首章):总大纲的当前卷展开为各章要点。
+
+    阶段范围由本节点产出并被代码解析(stage_end_chapter)——阶段边界
+    以细纲实际覆盖的章号为准,不再按固定章数硬切。
+    """
 
     name = "supervisor"
     role = AgentRole.SUPERVISOR
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
         done = state.get("chapters_done", 0)
+        recap = deps.story_recap(state)     # 已完成剧情回顾(防重排)
         brief = deps.recent_carryover(state)   # 上期衔接状态(短期记忆)
         outline = self.ask_text(
             system=(
-                "你是剧情策划。基于总大纲中下一卷的内容,产出该阶段(卷)的分章细纲:"
-                "每章一行:章号|主要事件|在场角色|本章要点。阶段内 3-5 章。"
-                "必须与已完成章节衔接。总长不超过 400 字。"
+                "你是剧情策划。基于总大纲中尚未完成的剧情,产出下一阶段的分章细纲:\n"
+                "每章一行:章号|主要事件|在场角色|本章要点。阶段覆盖 3-6 章,"
+                f"章号从第 {done + 1} 章起连续编号。\n"
+                "铁律:[已完成剧情回顾]中的事件已经写过——细纲必须从回顾末尾的"
+                "剧情状态继续向前推进,严禁重排、复写或换措辞重演已完成事件;"
+                "若总大纲的某卷事件已部分完成,只规划其未完成部分。\n"
+                "每章要点须有新的剧情推进(新事件/新信息/新冲突),不得整章停留在"
+                "已完成状态。总长不超过 600 字。"
             ),
             user=f"[总大纲]\n{state.get('master_outline','')}\n\n"
-                 f"[已完成章数]{done}\n[上期衔接]{brief}",
+                 f"[已完成章数]{done}\n\n[已完成剧情回顾]\n{recap}\n\n"
+                 f"[上期衔接]{brief}",
             stage="stage_outline",
             story_id=state.get("story_id", ""),
         )
-        return {"stage_outline": outline, "is_stage_first": True}
+        return {"stage_outline": outline, "is_stage_first": True,
+                "stage_end_chapter": deps.parse_stage_range(outline, start=done + 1)}
 
 
 @register_agent
@@ -90,8 +112,13 @@ class ChapterSliceNode(BaseAgent):
         # 确定性优先:从阶段细纲提取本章行;LLM 仅做衔接补全
         slice_line = deps.extract_stage_line(state.get("stage_outline", ""), no)
         chapter_brief = self.ask_text(
-            system="把给定章节细纲行扩展为 3-5 句本章写作要点,包含开场衔接提示。直接输出要点。",
-            user=f"[本章细纲行]{slice_line}\n[上期衔接]{brief}",
+            system=(
+                "把给定章节细纲行扩展为 3-5 句本章写作要点,包含开场衔接提示"
+                "(以上一章结尾的状态、场景、时间为起点继续)。\n"
+                "注意:细纲行之后已经写完的章节不得出现在本章要点里;"
+                "本章要点必须是尚未发生的新剧情。直接输出要点。"
+            ),
+            user=f"[本章细纲行]{slice_line}\n[章号]第{no}章\n[上期衔接]{brief}",
             stage="chapter_slice",
             story_id=state.get("story_id", ""),
         )
