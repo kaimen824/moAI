@@ -71,12 +71,12 @@ export default function Library({ onOpen }) {
             <BookOpenIcon size={16} />
             <Heading size="4" className="reader-serif">开一部新书</Heading>
           </Flex>
-          <Flex gap="3" wrap="wrap">
-            <TextField.Root size="2" placeholder="书名" value={title}
-              style={{ width: 200 }} onChange={e => setTitle(e.target.value)} />
-            <TextField.Root size="2" placeholder="一句话简介(可选)" value={premise}
-              style={{ flex: 1, minWidth: 220 }} onChange={e => setPremise(e.target.value)} />
-            <Button size="2" onClick={create} disabled={!title.trim()}>
+          <Flex gap="3" wrap="wrap" align="center">
+            <TextField.Root size="3" className="hero-input" placeholder="书名" value={title}
+              style={{ width: 220 }} onChange={e => setTitle(e.target.value)} />
+            <TextField.Root size="3" placeholder="一句话简介(可选)" value={premise}
+              style={{ flex: 1, minWidth: 240 }} onChange={e => setPremise(e.target.value)} />
+            <Button size="3" onClick={create} disabled={!title.trim()}>
               <PencilSimpleIcon size={14} weight="bold" /> 创建
             </Button>
           </Flex>

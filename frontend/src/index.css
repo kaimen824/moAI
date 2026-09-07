@@ -75,3 +75,87 @@ body {
   letter-spacing: 0.35em;
   font-family: Georgia, "Noto Serif SC", "SimSun", serif;
 }
+
+/* ================= 表单质感层 =================
+   Radix 默认输入是"工程默认值";覆盖为纸面质感:
+   内阴影浮起 + hairline 边 + 双层 focus 光环 + 衬线 placeholder。 */
+
+.rt-TextFieldRoot, .rt-TextAreaRoot {
+  border: 1px solid var(--gray-a5);
+  background: var(--gray-a2);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.2s var(--ease-out, ease),
+              box-shadow 0.2s var(--ease-out, ease),
+              background 0.2s var(--ease-out, ease);
+}
+.rt-TextFieldRoot:hover, .rt-TextAreaRoot:hover {
+  border-color: var(--gray-a7);
+  background: var(--gray-a3);
+}
+.rt-TextFieldRoot:focus-within, .rt-TextAreaRoot:focus-within {
+  border-color: var(--accent-a8);
+  background: var(--color-panel);
+  box-shadow:
+    0 0 0 3px var(--accent-a4),
+    inset 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.rt-TextFieldInput::placeholder, .rt-TextAreaTextArea::placeholder {
+  color: var(--gray-9);
+  opacity: 0.9;
+}
+.rt-TextFieldInput, .rt-TextAreaTextArea {
+  caret-color: var(--accent-11);
+}
+
+/* 数字输入去掉原生 spinner(工程感来源之一) */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ================= 按钮质感 =================
+   实心主按钮:渐变 + 顶部高光 + 底部投影 + 按压下沉。 */
+.rt-Button.rt-variant-solid:not(.rt-high-contrast) {
+  background-image: linear-gradient(180deg, var(--accent-a10), var(--accent-9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+              0 1px 2px rgba(0, 0, 0, 0.22);
+  transition: filter 0.15s var(--ease-out, ease), transform 0.1s;
+}
+.rt-Button.rt-variant-solid:not(.rt-high-contrast):hover {
+  filter: brightness(1.07);
+}
+.rt-Button.rt-variant-solid:not(.rt-high-contrast):active {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+              0 0 1px rgba(0, 0, 0, 0.2);
+}
+/* soft/ghost 按钮:hairline 边框 */
+.rt-Button.rt-variant-soft, .rt-Button.rt-variant-surface {
+  border: 1px solid var(--gray-a5);
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.rt-Button.rt-variant-soft:hover, .rt-Button.rt-variant-surface:hover {
+  border-color: var(--gray-a7);
+}
+.rt-Button.rt-variant-soft:active, .rt-Button.rt-variant-surface:active {
+  transform: translateY(1px);
+}
+
+/* ================= 卡片表面体系 =================
+   统一 hairline + 柔和双层阴影,替代 Radix 默认的平淡投影。 */
+.rt-Card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05),
+              0 10px 32px -18px rgba(0, 0, 0, 0.22);
+}
+.radix-themes:where([data-is-dark]) .rt-Card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
+              0 10px 32px -16px rgba(0, 0, 0, 0.5);
+}
+
+/* 仪式感输入:开卷书名等大号衬线(挂 .hero-input) */
+.hero-input .rt-TextFieldInput {
+  font-family: Georgia, "Noto Serif SC", "SimSun", serif;
+  font-size: 19px;
+  letter-spacing: 0.06em;
+}
