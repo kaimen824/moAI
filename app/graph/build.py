@@ -39,12 +39,42 @@ from app.graph.state import GraphState
 from app.memory.repository import AgentContext
 
 REWRITE_LIMIT = 3   # ADR-0007 裁决 4(可配置)
+STAGE_REGEN_LIMIT = 3        # 细纲重生成上限:超过自动转用户(行业惯例:escalate to human)
+STAGE_STUCK_RATIO = 0.85     # 相邻两版细纲相似度阈值:超过判定空转,自动转用户
+
+
+def _stage_stuck(state: GraphState) -> bool:
+    """重复检测(行业 Agent 的 repetition guard):重生成结果与上一版几乎相同,
+    说明评审-重生成循环在空转,继续只会烧 token。"""
+    from difflib import SequenceMatcher
+    prev, cur = state.get("prev_stage_outline", ""), state.get("stage_outline", "")
+    if not prev or not cur:
+        return False
+    return SequenceMatcher(None, prev, cur).ratio() > STAGE_STUCK_RATIO
+
+
+def _stage_escalation(state: GraphState) -> str | None:
+    """细纲循环自动中断原因(None=无需中断,继续 regen)。"""
+    verdict = state.get("outline_verdict", {}).get("verdict", "revise")
+    if verdict not in ("revise", "block"):
+        return None
+    count = state.get("stage_regen_count", 1)
+    if count >= STAGE_REGEN_LIMIT:
+        return f"细纲已重生成 {count} 轮仍未通过评审,自动转交你裁决"
+    if _stage_stuck(state):
+        return "细纲重生成结果与上一版几乎相同(循环空转),自动转交你裁决"
+    return None
 
 
 def _node(fn: Callable, deps: Deps):
-    """把 (state, deps) 节点适配为 langgraph 节点(闭包注入 deps)。"""
+    """把 (state, deps) 节点适配为 langgraph 节点(闭包注入 deps)。
+
+    入口统一做协作式停止检查:用户中断置位后,图在下一个节点边界
+    抛 StopRequested 安全退出(checkpointer 保留断点,续跑从此恢复)。
+    """
     @functools.wraps(fn)
     def wrapped(state: GraphState) -> dict:
+        deps.check_stop(state.get("story_id", ""))
         return fn(state, deps)
     return wrapped
 
@@ -86,6 +116,7 @@ def confirm_stage_outline(state: GraphState, deps: Deps) -> dict:
         "stage_outline": state.get("stage_outline", ""),
         "review": state.get("outline_verdict", {}),
         "regen_count": state.get("stage_regen_count", 1),
+        "escalation": _stage_escalation(state),   # 自动中断原因(非空=循环转人工)
     })
     return {"user_input": decision,
             "chapter_no": (state.get("chapters_done", 0) + 1)}
@@ -233,7 +264,10 @@ def route_after_stage_review(state: GraphState) -> str:
 
 
 def route_after_stage_agent_review(state: GraphState) -> str:
-    """阶段细纲:大纲 Agent 评审不通过 -> 回炉;通过 -> 用户确认。"""
+    """阶段细纲:评审不过 -> 回炉重生成;但循环空转自动中断
+    (超 STAGE_REGEN_LIMIT 轮,或重生成结果与上一版几乎相同)-> 转用户裁决。"""
+    if _stage_escalation(state):
+        return "confirm_stage"
     verdict = state.get("outline_verdict", {}).get("verdict", "revise")
     if verdict in ("revise", "block"):
         return "regen_stage"

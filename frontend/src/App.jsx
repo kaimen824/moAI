@@ -6,7 +6,7 @@ import {
 import {
   BookOpenIcon, CheckCircleIcon, CheckIcon, XCircleIcon,
   GearIcon, LightningIcon, ListIcon, MagnifyingGlassIcon, PencilSimpleIcon,
-  PlayIcon, BookOpenTextIcon, PaperPlaneTiltIcon, StarIcon,
+  PlayIcon, BookOpenTextIcon, PaperPlaneTiltIcon, StarIcon, StopIcon,
 } from '@phosphor-icons/react'
 import { api } from './api.js'
 import Landing from './Landing.jsx'
@@ -323,6 +323,7 @@ function Console({ storyId }) {
   const [directive, setDirective] = useState('')
   const [directiveMsg, setDirectiveMsg] = useState('')
   const [tags, setTags] = useState([])
+  const [stopping, setStopping] = useState(false)   // 已请求中断,等当前节点收尾
   const draftRef = useRef(null)
 
   useEffect(() => {
@@ -341,7 +342,9 @@ function Console({ storyId }) {
     else if (kind === 'token') setDraft(d => d + (data.text || ''))
     else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)); setRunning(false) }
     else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成') }
+    else if (kind === 'stopped') { setMsg(data.message || '已中断'); setRunning(false) }
     else if (kind === 'error') { setMsg('错误:' + (data.message || '')); setRunning(false) }
+    if (kind === 'stopped' || kind === 'error' || kind === 'interrupt') setStopping(false)
   }
 
   useEffect(() => {
@@ -368,11 +371,19 @@ function Console({ storyId }) {
 
   const start = async () => {
     setRunning(true); setStages([]); setDraft(''); setIntr(null); setMsg('')
-    setElapsed(0)
+    setElapsed(0); setStopping(false)
     try {
       await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput, tags }, onEvent)
     } catch (e) { setMsg('错误:' + e.message) }
     setRunning(false)
+  }
+
+  const stopRun = async () => {
+    try {
+      await api.stop(storyId)
+      setStopping(true)
+      setMsg('已请求中断,当前节点收尾后停止(断点保留,可继续生成)')
+    } catch (e) { setMsg('中断失败:' + e.message) }
   }
 
   const send = async (action) => {
@@ -459,6 +470,12 @@ function Console({ storyId }) {
               {running ? <Spinner size="1" /> : <PlayIcon size={14} weight="bold" />}
               {running ? '生成中' : existingChapters > 0 ? '继续生成' : '开始生成'}
             </Button>
+            {running && (
+              <Button color="red" variant="soft" onClick={stopRun} disabled={stopping}>
+                <StopIcon size={14} weight="bold" />
+                {stopping ? '中断中…' : '中断'}
+              </Button>
+            )}
             {msg && <Text size="1" color="gray">{msg}</Text>}
           </Flex>
 
@@ -524,6 +541,16 @@ function Console({ storyId }) {
               <Heading size="4" color="amber">{INTERRUPT_TITLES[intr.type] || intr.type}</Heading>
             </Flex>
 
+            {intr.escalation && (
+              <Flex align="center" gap="2" p="3" style={{
+                borderRadius: 8, background: 'var(--red-a3)',
+                border: '1px solid var(--red-a7)',
+              }}>
+                <XCircleIcon size={15} color="var(--red-11)" weight="bold" />
+                <Text size="2" color="red" weight="medium">自动中断:{intr.escalation}</Text>
+              </Flex>
+            )}
+
             {(intr.outline || intr.stage_outline) && (
               <ScrollArea scrollbars="vertical" style={{ maxHeight: '55vh' }}>
                 <Text as="div" size="2" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.9 }}>
@@ -538,6 +565,7 @@ function Console({ storyId }) {
               }}>
                 <Flex gap="2" align="center" wrap="wrap">
                   <Text size="1" color="gray">评审 Agent 意见</Text>
+                  {intr.regen_count > 1 && <Badge color="gray" variant="soft">第 {intr.regen_count} 次生成</Badge>}
                   <Badge color={intr.review.verdict === 'pass' ? 'grass'
                     : intr.review.verdict === 'block' ? 'red' : 'amber'}>
                     {intr.review.verdict}

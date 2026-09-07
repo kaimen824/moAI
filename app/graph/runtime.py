@@ -30,6 +30,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class StopRequested(Exception):
+    """用户请求中断(协作式停止):节点入口检查抛出,worker 捕获后发 stopped 事件。
+
+    checkpointer 保留最后完成的节点状态,重新 generate 从断点续跑。
+    """
+
+
 @dataclass
 class Deps:
     """节点可用的运行时依赖(经闭包注入图节点)。"""
@@ -47,6 +54,20 @@ class Deps:
     # 各自持锁做短临界区。不全程锁图执行——LangGraph fan-out 节点跑在独立线程。
     run_lock: threading.RLock = field(default_factory=threading.RLock)
     checkpointer: object = None
+    # 协作式停止:用户中断按钮置位 -> 节点入口检查抛 StopRequested(行业惯例:
+    # 不硬杀线程,在步骤边界安全退出,checkpointer 状态保留可续跑)
+    _stop_requests: set = field(default_factory=set)
+
+    def request_stop(self, story_id: str) -> None:
+        self._stop_requests.add(story_id)
+
+    def clear_stop(self, story_id: str) -> None:
+        self._stop_requests.discard(story_id)
+
+    def check_stop(self, story_id: str) -> None:
+        """节点入口调用:置位即抛 StopRequested(由 _node 统一注入)。"""
+        if story_id in self._stop_requests:
+            raise StopRequested(story_id)
 
     def emit(self, kind: str, data: dict, thread_id: str | None = None) -> None:
         """广播事件(按 thread 订阅者)并留存历史。节点内调用走 _current_thread。"""

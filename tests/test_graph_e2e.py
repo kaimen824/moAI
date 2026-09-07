@@ -198,6 +198,73 @@ def test_e2e_stage_boundary_by_outline_range(engine, monkeypatch):
     assert "已写完" in recap and "待写" in recap
 
 
+def test_e2e_stage_loop_auto_escalates(engine, monkeypatch):
+    """自动中断(重复检测):重生成细纲与上一版几乎相同 -> 空转判定,转用户裁决。"""
+    monkeypatch.setitem(SCRIPTS, "review_stage_outline",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "structure": 5}, "feedback": "不行"})
+    # stage_outline 脚本固定 -> 第2次生成结果与第1次完全相同(空转实锤)
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("空转检测", "测试")
+    cfg = {"configurable": {"thread_id": "e2e-stuck"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x"}, cfg)   # 中断 0
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    # 第1轮:regen_count=1 < 3,prev 为空不判空转 -> 回炉重生成
+    # 第2轮:新旧两版相同 -> stuck -> 自动转 confirm_stage(带 escalation)
+    while result.get("__interrupt__", [{}])[0].value.get("type") != "confirm_stage_outline":
+        result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "confirm_stage_outline"
+    assert intr["escalation"] and "空转" in intr["escalation"]
+    assert intr["regen_count"] >= 2
+
+
+def test_e2e_stage_regen_limit_escalates(tmp_path, monkeypatch):
+    """自动中断(轮次上限):细纲重生成 3 轮仍未通过 -> 转 confirm_stage。"""
+    import json as _json
+    from app.core.llm.base import LLMResponse
+    from app.core.llm.facade import LLMFacade
+    from app.graph.runtime import build_engine
+    monkeypatch.setitem(SCRIPTS, "review_stage_outline",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "structure": 5}, "feedback": "不行"})
+    calls = {"stage_outline": 0}
+
+    def dynamic(stage: str):
+        if stage in SCRIPTS and stage != "stage_outline":
+            val = SCRIPTS[stage]
+            return val if isinstance(val, LLMResponse) else LLMResponse(
+                content=val if isinstance(val, str) else _json.dumps(val, ensure_ascii=False),
+                model="fake")
+        if stage == "stage_outline":
+            calls["stage_outline"] += 1
+            variants = [
+                "1| 暴雨夜沈砚在后山发现刻满符文的古碑,白芷同行目击异象|沈砚,白芷|古碑初现\n2| 次日清晨村中长老召集议事,商讨古碑来历|沈砚,长老|身世线索",
+                "1| 沈砚随商队穿越黑风峡,遭遇马匪截道,出手退敌显露锋芒|沈砚,商队|江湖初行\n2| 抵达青州城,卷入漕帮与官府的暗斗|沈砚,漕帮|势力纠葛",
+                "1| 深夜破庙避雨,神秘黑衣人留下半块玉佩后离去|沈砚,黑衣人|悬念钩子\n2| 沈砚循玉佩线索查访城西当铺,掌柜认出故人信物|沈砚,掌柜|玉佩之谜",
+            ]
+            return LLMResponse(content=variants[(calls["stage_outline"] - 1) % 3], model="fake")
+        return None
+
+    facade = LLMFacade(response_override=dynamic)
+    facade = LLMFacade(response_override=dynamic)
+    deps, conn = build_engine(tmp_path / "limit.db", llm=facade)
+    graph = build_graph(deps, checkpointer=deps.checkpointer)
+    story_id, branch = deps.repo.create_story("上限检测", "测试")
+    cfg = {"configurable": {"thread_id": "e2e-limit"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x"}, cfg)
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    while result.get("__interrupt__", [{}])[0].value.get("type") != "confirm_stage_outline":
+        result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    intr = result["__interrupt__"][0].value
+    assert intr["escalation"] and "3 轮" in intr["escalation"]
+    assert calls["stage_outline"] == 3          # 恰好生成 3 次即停,不再空烧
+
+
 def test_e2e_agent_traces_recorded(engine):
     """全节点可观测:LLM 调用的输入/输出快照落 agent_traces。"""
     graph, deps, conn = engine

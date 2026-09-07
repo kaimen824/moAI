@@ -46,6 +46,7 @@ export const api = {
   chapter: (id, no) => j(`/stories/${id}/chapters/${no}`),
   generate: (id, payload, onEvent) => sse(`/stories/${id}/generate`, payload, onEvent),
   resume: (id, payload, onEvent) => sse(`/stories/${id}/resume`, payload, onEvent),
+  stop: (id) => j(`/stories/${id}/stop`, { method: "POST" }),
   attach: (id, onEvent) => sse(`/stories/${id}/attach`, {}, onEvent),
   runState: (id) => j(`/stories/${id}/run-state`),
   directive: (id, text) => j(`/stories/${id}/directive`, { method: "POST", body: JSON.stringify({ text }) }),

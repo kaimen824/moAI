@@ -107,10 +107,15 @@ def _extract_payload(update: dict | None) -> dict:
 def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
     """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。"""
     deps, _ = engine()
+    from app.graph.runtime import StopRequested
     deps.clear_events(thread_id)        # 新一轮生成:该 thread 历史从零
+    deps.clear_stop(thread_id)          # 新一轮运行清除上一轮的中断请求
     q = deps.subscribe(thread_id)
     deps._current_thread = thread_id    # 节点内 emit(token)归属本 thread
-    cfg = {"configurable": {"thread_id": thread_id}}
+    cfg = {"configurable": {"thread_id": thread_id},
+           # 硬兜底:任何未预见的图循环超步数即抛错(单章全流程约 20 步,
+           # 200 步 ≈ 8-10 章 + 评审循环余量;业务级循环各有更早的自动转人工)
+           "recursion_limit": 200}
     _active.add(thread_id)
 
     def worker() -> None:
@@ -125,10 +130,14 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
                         return
                     deps.emit("stage", {"node": node, "payload": _extract_payload(update)}, thread_id)
             deps.emit("done", {"ok": True}, thread_id)
+        except StopRequested:
+            # 用户中断:断点已由 checkpointer 保留,重新生成即续跑
+            deps.emit("stopped", {"message": "已按用户请求中断;重新点「生成」可从断点续跑"}, thread_id)
         except Exception as exc:  # noqa: BLE001
             deps.emit("error", {"message": str(exc)}, thread_id)
         finally:
             _active.discard(thread_id)
+            deps.clear_stop(thread_id)
 
     threading.Thread(target=worker, daemon=True).start()
     return _sse_response(deps, q)
@@ -140,7 +149,7 @@ def _sse_response(deps, q) -> StreamingResponse:
             while True:
                 kind, data = q.get(timeout=3600)
                 yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-                if kind in ("interrupt", "done", "error"):
+                if kind in ("interrupt", "done", "error", "stopped"):
                     break
         finally:
             deps.unsubscribe(q)
@@ -240,6 +249,15 @@ def resume(story_id: str, req: ResumeRequest):
                         "threads": req.threads}),
         thread_id=story_id,
     )
+
+
+@app.post("/stories/{story_id}/stop")
+@locked
+def stop(story_id: str):
+    """协作式中断:置位停止请求,图在下一个节点边界安全退出(断点可续跑)。"""
+    deps, _ = engine()
+    deps.request_stop(story_id)
+    return {"ok": True, "active": story_id in _active}
 
 
 @app.get("/stories/{story_id}/chapters/{chapter_no}")
