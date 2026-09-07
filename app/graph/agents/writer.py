@@ -71,8 +71,8 @@ class WriterNode(BaseAgent):
             "3. 自然照应活跃伏笔;文风连贯。直接输出正文,不要标题和说明。"
         )
         user = render_context(state)
-        # SSE 监听时逐 token 流式;否则一次性
-        if any(t == deps._current_thread for t, _q in deps._subscribers):
+
+        def _stream() -> str:
             chunks: list[str] = []
             for token in self.llm.stream(
                 self.role,
@@ -81,7 +81,23 @@ class WriterNode(BaseAgent):
             ):
                 chunks.append(token)
                 deps.emit("token", {"text": token})
-            return {"draft": "".join(chunks)}
-        draft = self.ask_text(system, user, stage="draft",
-                              story_id=state.get("story_id", ""))
+            return "".join(chunks)
+
+        # SSE 监听时逐 token 流式;否则一次性
+        streaming = any(t == deps._current_thread for t, _q in deps._subscribers)
+        draft = _stream() if streaming else self.ask_text(
+            system, user, stage="draft", story_id=state.get("story_id", ""))
+
+        # 空输出防御:模型偶发返回空流(实测案例:35s/0 token)。
+        # 重试一次(非流式,拿到完整内容再整段下发);仍空则显式报错——
+        # 不把空草稿送进评审管道。
+        if not draft.strip():
+            draft = self.ask_text(system, user, stage="draft",
+                                  story_id=state.get("story_id", ""))
+            if streaming and draft.strip():
+                deps.emit("token", {"text": draft})
+        if not draft.strip():
+            raise RuntimeError(
+                f"写作模型连续两次返回空内容(第{state.get('chapter_no')}章"
+                f"第{state.get('rewrite_count', 0) + 1}稿),已中止——请重试或换模型")
         return {"draft": draft}

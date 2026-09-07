@@ -70,10 +70,12 @@ def test_e2e_two_chapters_with_interrupts(engine):
     story_id, branch = deps.repo.create_story("端到端测试", "测试小说")
     cfg = {"configurable": {"thread_id": "e2e-run-1"}}
 
-    # 1) 启动 -> 共创/角色/总大纲/评审 -> [中断点 0]
+    # 1) 启动 -> 共创/角色草案(暂存)/总大纲/评审 -> [中断点 0]
     result = graph.invoke({"story_id": story_id, "branch_id": branch,
                            "target_chapters": 2, "initial_input": "东方奇幻"}, cfg)
     assert result["__interrupt__"][0].value["type"] == "confirm_master_outline"
+    # 角色卡确认前不落库(共创产物暂存 state,用户放弃/重来零残留)
+    assert conn.execute("SELECT COUNT(*) c FROM characters").fetchone()["c"] == 0
 
     # 2) 确认总大纲 -> 阶段细纲 + 评审 -> [中断点 A]
     result = graph.invoke(Command(resume={"action": "confirm"}), cfg)

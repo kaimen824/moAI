@@ -98,6 +98,9 @@ def confirm_master_outline(state: GraphState, deps: Deps) -> dict:
              state["master_outline"], "confirmed",
              datetime.now(timezone.utc).isoformat(timespec="seconds")))
         deps.conn.commit()
+    # 角色卡随总大纲确认一起落库(共创产物先暂存 state,确认前不写库——
+    # 用户放弃/重来时零残留;ADR-0011 共创前置的落库时点修正)
+    deps.persist_characters(state)
     return {"user_input": decision, "outline_confirmed": True,
             "chapter_no": 1, "chapters_done": 0}
 
@@ -279,10 +282,10 @@ def route_after_master_review(state: GraphState) -> str:
 def build_graph(deps: Deps, checkpointer=None):
     g = StateGraph(GraphState)
 
-    # 共创前置(ADR-0011)
+    # 共创前置(ADR-0011;角色草案只暂存 state,确认总大纲时才落库)
     g.add_node("coauthor", _node(CoauthorNode(deps.llm), deps))
     g.add_node("init_characters", _node(InitCharactersNode(deps.llm), deps))
-    g.add_node("persist_characters", lambda s: {"character_drafts": deps.persist_characters(s) or s.get("character_drafts", [])})
+    g.add_node("persist_characters", lambda s: {"character_drafts": s.get("character_drafts", [])})
     g.add_node("gen_master_outline", _node(GenMasterOutline(deps.llm), deps))
     g.add_node("review_master_outline", _node(ReviewMasterOutline(deps.llm), deps))
     g.add_node("confirm_master_outline", functools.partial(confirm_master_outline, deps=deps))

@@ -326,7 +326,11 @@ function Console({ storyId }) {
   const [tags, setTags] = useState([])
   const [stopping, setStopping] = useState(false)   // 已请求中断,等当前节点收尾
   const draftRef = useRef(null)
-  const curDraft = drafts.length ? drafts[viewIdx >= 0 ? viewIdx : drafts.length - 1] : null
+  // 换稿保护:最新稿还在流式产出(空)时,正文区保留显示上一稿,避免"内容突然消失"
+  const latestDraft = drafts.length ? drafts[drafts.length - 1] : null
+  const generatingNext = viewIdx < 0 && !!latestDraft && !latestDraft.text && drafts.length > 1
+  const curDraft = viewIdx >= 0 ? drafts[viewIdx]
+    : (generatingNext ? drafts[drafts.length - 2] : latestDraft)
   const curText = curDraft?.text || ''
 
   useEffect(() => {
@@ -511,7 +515,9 @@ function Console({ storyId }) {
                 : <StarIcon size={14} weight="fill" color="#e0af68" />}
               <Text size="2" weight="medium">{curLabel}</Text>
               <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>
-                已耗时 {fmt(elapsed)}{curText.length > 0 && ` · 第${curDraft?.round || 1}稿已写出 ${curText.length} 字`}
+                已耗时 {fmt(elapsed)}{generatingNext
+                  ? ` · 第${latestDraft.round}稿生成中`
+                  : (curText.length > 0 && ` · 第${curDraft?.round || 1}稿已写出 ${curText.length} 字`)}
               </Text>
             </Flex>
           )}
@@ -538,9 +544,19 @@ function Console({ storyId }) {
       </Card>
 
       {/* 正文流(多稿版本化:评审回流重写时按稿分段,可回看旧稿) */}
-      {curText && (
+      {drafts.length > 0 && curDraft && (
         <Card size="3">
           <Flex direction="column" gap="2">
+            {generatingNext && (
+              <Flex align="center" gap="2" px="3" py="2" style={{
+                borderRadius: 8, background: 'var(--accent-a3)',
+              }}>
+                <Spinner size="1" />
+                <Text size="2" weight="medium">
+                  评审回流重写中(第{latestDraft.round}稿)——新稿产出前暂显示上一稿,内容未丢失
+                </Text>
+              </Flex>
+            )}
             <Flex align="center" gap="2" wrap="wrap">
               <BookOpenTextIcon size={16} />
               <Heading size="4">正文(实时流式)</Heading>
@@ -568,7 +584,7 @@ function Console({ storyId }) {
                 {drafts.length > 1 ? `第${curDraft.round}稿 · ` : ''}{curText.length} 字
               </Badge>
             </Flex>
-            {curDraft.round > 1 && (
+            {curDraft.round > 1 && !generatingNext && (
               <Text size="1" color="amber" weight="medium">
                 本稿为评审回流后的第 {curDraft.round} 次生成,上一稿可点上方标签对照
               </Text>
