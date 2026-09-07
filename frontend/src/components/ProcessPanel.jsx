@@ -60,8 +60,26 @@ export default function ProcessPanel({ entries, running, onCollapse }) {
   const [detail, setDetail] = useState(null)
   const [filter, setFilter] = useState('all')
   const [collapsed, setCollapsed] = useState([])     // 已折叠的章组 key
-  const scrollerRef = useRef(null)
+  const rootRef = useRef(null)
   const stickRef = useRef(true)
+
+  /* 滚动容器是 Radix 的 viewport(内部内容元素不滚动)——
+     经 DOM 定位挂接贴底跟随与手动上翻检测 */
+  const viewport = () => rootRef.current?.querySelector('.rt-ScrollAreaViewport') || null
+
+  useEffect(() => {
+    const vp = viewport()
+    if (vp && stickRef.current) vp.scrollTop = vp.scrollHeight
+  }, [entries])
+  useEffect(() => {
+    const vp = viewport()
+    if (!vp) return
+    const onScroll = () => {
+      stickRef.current = vp.scrollHeight - vp.scrollTop - vp.clientHeight < 40
+    }
+    vp.addEventListener('scroll', onScroll, { passive: true })
+    return () => vp.removeEventListener('scroll', onScroll)
+  }, [])
 
   /* 按章分组;章内保留时序 */
   const groups = useMemo(() => {
@@ -88,18 +106,9 @@ export default function ProcessPanel({ entries, running, onCollapse }) {
     return gs
   }, [entries])
 
-  /* 当前组(最后一组)默认展开;贴底自动滚动 */
+  /* 当前组(最后一组)默认展开 */
   const lastKey = groups.length ? groups[groups.length - 1].key : ''
   const isCollapsed = (key) => key !== lastKey && collapsed.includes(key)
-
-  useEffect(() => {
-    const el = scrollerRef.current
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight
-  }, [entries])
-  const onScroll = (e) => {
-    const el = e.currentTarget
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-  }
 
   const filtered = (items) => filter === 'all' ? items
     : filter === 'review' ? items.filter(e => e.kind === 'llm'
@@ -108,7 +117,7 @@ export default function ProcessPanel({ entries, running, onCollapse }) {
       : /write_draft|draft_start/.test(e.node || ''))
 
   return (
-    <Card size="2" className="anim-in" style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <Card ref={rootRef} size="2" className="anim-in" style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <Flex direction="column" gap="2" style={{ flex: 1, minHeight: 0 }}>
         <Flex align="center" gap="2" style={{ flexShrink: 0 }}>
           <ActivityIcon size={14} color="var(--accent-11)" weight="bold" />
@@ -139,7 +148,7 @@ export default function ProcessPanel({ entries, running, onCollapse }) {
         </Flex>
 
         <ScrollArea scrollbars="vertical" style={{ flex: 1, minHeight: 0 }} type="hover">
-          <Flex direction="column" gap="1" ref={scrollerRef} onScroll={onScroll}
+          <Flex direction="column" gap="1"
             style={{ paddingRight: 2 }}>
             {groups.map(g => {
               const open = !isCollapsed(g.key)

@@ -451,9 +451,14 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
         )}
       </Flex>
 
-      {/* 右栏:AI 工作过程(默认展开;透明原则:每步实时可见) */}
+      {/* 右栏:AI 工作过程——钉在视口(sticky),流式输出时状态始终可见 */}
       {rightOpen ? (
-        <Flex direction="column" className="panel-anim" style={{ width: 336, flexShrink: 0 }}>
+        <Flex direction="column" className="panel-anim" style={{
+          width: 336, flexShrink: 0,
+          position: 'sticky', top: 12,
+          height: 'calc(100dvh - 24px)',
+          alignSelf: 'flex-start',
+        }}>
           <ProcessPanel entries={entries} running={running} onCollapse={() => setRightOpen(false)} />
         </Flex>
       ) : (
