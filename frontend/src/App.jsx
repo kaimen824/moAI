@@ -311,7 +311,8 @@ const INTERRUPT_TITLES = {
 function Console({ storyId }) {
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState([])
-  const [draft, setDraft] = useState('')
+  const [drafts, setDrafts] = useState([])        // [{chapter_no, round, text}] 多稿版本化
+  const [viewIdx, setViewIdx] = useState(-1)      // -1=跟随最新稿;>=0=回看指定稿
   const [intr, setIntr] = useState(null)
   const [feedback, setFeedback] = useState('')
   const [picked, setPicked] = useState([])
@@ -325,10 +326,12 @@ function Console({ storyId }) {
   const [tags, setTags] = useState([])
   const [stopping, setStopping] = useState(false)   // 已请求中断,等当前节点收尾
   const draftRef = useRef(null)
+  const curDraft = drafts.length ? drafts[viewIdx >= 0 ? viewIdx : drafts.length - 1] : null
+  const curText = curDraft?.text || ''
 
   useEffect(() => {
     draftRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [draft])
+  }, [curText])
 
   useEffect(() => {
     if (!running) return
@@ -339,7 +342,24 @@ function Console({ storyId }) {
   const onEvent = (kind, data) => {
     if (kind === 'stage') setStages(s => [...s, { node: data.node, t: Date.now(), payload: data.payload || {} }])
     else if (kind === 'agent_call') setStages(s => [...s, { node: `llm:${data.stage}`, t: Date.now(), llm: data }])
-    else if (kind === 'token') setDraft(d => d + (data.text || ''))
+    else if (kind === 'draft_start') {
+      // 新一稿开始:同章评审回流 -> 追加新版本;换章 -> 重置(旧章定稿后到阅读器看)
+      setDrafts(ds => {
+        const last = ds[ds.length - 1]
+        if (last && last.chapter_no !== data.chapter_no) {
+          return [{ chapter_no: data.chapter_no, round: data.round || 1, text: '' }]
+        }
+        return [...ds, { chapter_no: data.chapter_no, round: data.round || 1, text: '' }]
+      })
+      setViewIdx(-1)   // 新稿开始,切回跟随最新
+    }
+    else if (kind === 'token') setDrafts(ds => {
+      if (!ds.length) return [{ chapter_no: null, round: 1, text: data.text || '' }]
+      const cur = ds[ds.length - 1]
+      const next = [...ds]
+      next[next.length - 1] = { ...cur, text: cur.text + (data.text || '') }
+      return next
+    })
     else if (kind === 'interrupt') { setIntr(data); setPicked((data.thread_changes || []).map((_, i) => i)); setRunning(false) }
     else if (kind === 'done') { setIntr(null); setMsg('本轮目标章节全部完成') }
     else if (kind === 'stopped') { setMsg(data.message || '已中断'); setRunning(false) }
@@ -370,7 +390,7 @@ function Console({ storyId }) {
   }, [storyId])   // eslint-disable-line
 
   const start = async () => {
-    setRunning(true); setStages([]); setDraft(''); setIntr(null); setMsg('')
+    setRunning(true); setStages([]); setDrafts([]); setViewIdx(-1); setIntr(null); setMsg('')
     setElapsed(0); setStopping(false)
     try {
       await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput, tags }, onEvent)
@@ -389,7 +409,7 @@ function Console({ storyId }) {
   const send = async (action) => {
     if (!intr) return
     setRunning(true); setMsg(''); setElapsed(0)
-    if (action === 'revise') setDraft('')
+    // revise 不清旧稿:writer 的 draft_start 事件会开新版本,旧稿保留供对照
     const payload = {
       action,
       feedback: action === 'revise' ? feedback : '',
@@ -491,7 +511,7 @@ function Console({ storyId }) {
                 : <StarIcon size={14} weight="fill" color="#e0af68" />}
               <Text size="2" weight="medium">{curLabel}</Text>
               <Text size="1" color="gray" style={{ marginLeft: 'auto' }}>
-                已耗时 {fmt(elapsed)}{draft.length > 0 && ` · 已写出 ${draft.length} 字`}
+                已耗时 {fmt(elapsed)}{curText.length > 0 && ` · 第${curDraft?.round || 1}稿已写出 ${curText.length} 字`}
               </Text>
             </Flex>
           )}
@@ -517,17 +537,44 @@ function Console({ storyId }) {
         </Flex>
       </Card>
 
-      {/* 正文流 */}
-      {draft && (
+      {/* 正文流(多稿版本化:评审回流重写时按稿分段,可回看旧稿) */}
+      {curText && (
         <Card size="3">
           <Flex direction="column" gap="2">
-            <Flex align="center" gap="2">
+            <Flex align="center" gap="2" wrap="wrap">
               <BookOpenTextIcon size={16} />
               <Heading size="4">正文(实时流式)</Heading>
-              <Badge color="gray" variant="soft">{draft.length} 字</Badge>
+              {drafts.length > 1 && (
+                <Flex gap="1" align="center">
+                  {drafts.map((d, i) => (
+                    <Text as="span" key={i} size="1" weight="medium" style={{
+                      cursor: 'pointer', padding: '3px 10px', borderRadius: 999,
+                      background: (viewIdx >= 0 ? viewIdx : drafts.length - 1) === i
+                        ? 'var(--accent-9)' : 'var(--gray-a3)',
+                      color: (viewIdx >= 0 ? viewIdx : drafts.length - 1) === i
+                        ? 'white' : 'var(--gray-11)',
+                    }} onClick={() => setViewIdx(i)}>
+                      第{d.round}稿{d.round > 1 ? '(修订)' : ''}
+                    </Text>
+                  ))}
+                </Flex>
+              )}
+              {viewIdx >= 0 && viewIdx < drafts.length - 1 && (
+                <Button size="1" variant="soft" onClick={() => setViewIdx(-1)}>
+                  回到最新稿
+                </Button>
+              )}
+              <Badge color="gray" variant="soft" style={{ marginLeft: 'auto' }}>
+                {drafts.length > 1 ? `第${curDraft.round}稿 · ` : ''}{curText.length} 字
+              </Badge>
             </Flex>
+            {curDraft.round > 1 && (
+              <Text size="1" color="amber" weight="medium">
+                本稿为评审回流后的第 {curDraft.round} 次生成,上一稿可点上方标签对照
+              </Text>
+            )}
             <Text as="div" size="3" ref={draftRef}
-              style={{ whiteSpace: 'pre-wrap', lineHeight: 2.1, minHeight: '48vh' }}>{draft}</Text>
+              style={{ whiteSpace: 'pre-wrap', lineHeight: 2.1, minHeight: '48vh' }}>{curText}</Text>
           </Flex>
         </Card>
       )}

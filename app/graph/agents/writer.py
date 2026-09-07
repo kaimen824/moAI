@@ -56,6 +56,11 @@ class WriterNode(BaseAgent):
     role = AgentRole.WRITER
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
+        # 草稿版本标记:评审回流重写时,前端凭此区分第 N 稿(而非把两稿糊在同一段流里)
+        deps.emit("draft_start", {
+            "chapter_no": state.get("chapter_no"),
+            "round": state.get("rewrite_count", 0) + 1,
+        })
         system = (
             "你是长篇网文执笔者。依据上下文写本章正文(2500-4000 字,网文单章体量),要求:\n"
             "1. [角色已知事实]是已经发生过的背景(标注了章号):角色只知道列出的内容,"
