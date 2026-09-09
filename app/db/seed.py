@@ -12,12 +12,14 @@ SEED_ACL: list[tuple[str, str, int, int]] = []
 _WRITER_DOMAINS: dict[str, list[str]] = {
     "event_manager": ["facts", "beliefs", "fact_visibility", "temporal_relations"],
     "reviewer": ["plot_threads"],
-    "character_manager": ["characters", "entities", "entity_links"],
+    "character_manager": ["characters"],
+    "entity_manager": ["entities", "entity_links", "entity_aliases", "entity_merge_proposals"],
     "supervisor": [
         "stories", "outlines", "branches", "facts", "beliefs",
         "fact_visibility", "characters", "chapters", "paragraphs",
         "chapter_summaries", "plot_threads", "temporal_relations",
-        "entities", "entity_links", "review_results", "user_directives",
+        "entities", "entity_links", "entity_aliases", "entity_merge_proposals",
+        "review_results", "user_directives",
     ],
 }
 
@@ -29,7 +31,9 @@ _READER_DOMAINS: dict[str, list[str]] = {
     "reviewer": ["outlines", "facts", "beliefs", "characters", "chapters",
                  "chapter_summaries", "entities"],
     "event_manager": ["outlines", "chapters", "characters", "chapter_summaries", "entities"],
-    "character_manager": ["outlines", "facts", "beliefs", "chapters", "chapter_summaries"],
+    "character_manager": ["outlines", "facts", "beliefs", "chapters", "chapter_summaries",
+                          "entities", "entity_links"],
+    "entity_manager": ["outlines", "characters", "facts", "chapter_summaries"],
     "retrieval_service": [
         "outlines", "facts", "beliefs", "fact_visibility", "characters",
         "chapters", "paragraphs", "chapter_summaries", "plot_threads",

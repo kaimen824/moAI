@@ -16,6 +16,7 @@ class GraphState(TypedDict, total=False):
     initial_input: str            # 用户的世界观构想(共创起点)
     world_settings: str           # 访谈汇总产出
     character_drafts: list[dict]  # 角色管理产出的角色卡草案
+    entity_drafts: dict           # 实体种子(ADR-0015:entities/character_aliases/links,确认总大纲时落库)
     master_outline: str           # 总大纲(含卷结构)
     outline_verdict: dict         # 大纲 Agent 对总大纲的裁决
     outline_confirmed: bool
@@ -40,11 +41,13 @@ class GraphState(TypedDict, total=False):
     rewrite_exhausted: bool       # 达重写上限仍未通过 -> 交用户裁决
 
     # ---- 定稿(编排原子性:暂存变更集)----
-    fact_changes: list[dict]      # 事件管理抽取(facts/beliefs/visibility)
+    fact_changes: dict            # 事件管理抽取(facts/beliefs/visibility/entities/links)
+    entity_changes: dict          # 实体消歧产物(ADR-0015:new_entities/aliases/links/proposals)
     character_changes: list[dict] # 角色卡更新
     thread_changes: list[dict]    # 伏笔变更(审校建议,人工已确认)
     chapter_summary: str
     stage_summary: str            # 阶段末章时的聚合摘要(layer='stage')
+    entity_content_updates: list[dict]  # 阶段末实体条目滚动(ADR-0015 裁决②)
     chapter_id: str
 
     # ---- 中断恢复的用户输入 ----

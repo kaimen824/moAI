@@ -93,10 +93,14 @@ class RetrievalService:
                 result.characters.append(characters[char_id])
         result.active_threads = [vars(t) for t in self._repo.get_plot_threads(ctx, status="open")]
 
-        # ② 链接扩展一跳(在场角色的实体邻居)
+        # ② 链接扩展一跳(在场角色的实体邻居;剔除 embedding blob——
+        #    下游只渲染条目文本,blob 进 state 会随每个 checkpoint 重复序列化)
         entity_ids = [c["entity_id"] for c in result.characters if c.get("entity_id")]
         if entity_ids:
-            result.expanded_entities = [vars(e) for e in self._repo.get_linked_entities(ctx, entity_ids)]
+            result.expanded_entities = [
+                {k: v for k, v in vars(e).items() if k != "embedding"}
+                for e in self._repo.get_linked_entities(ctx, entity_ids)
+            ]
 
         # ③ 向量兜底:query embedding 对全库 facts 余弦 top-k(排除已含)
         if query_text:
@@ -145,7 +149,9 @@ class RetrievalService:
                 continue
             vec = decode_embedding(r["embedding"])
             if vec:
-                scored.append((cosine(qvec, vec), dict(r)))
+                hit = dict(r)
+                hit.pop("embedding", None)   # blob 不进 state/checkpoint
+                scored.append((cosine(qvec, vec), hit))
         scored.sort(key=lambda t: t[0], reverse=True)
         return [item for _, item in scored[:top_k]]
 

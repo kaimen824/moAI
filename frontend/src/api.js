@@ -52,6 +52,8 @@ export const api = {
   directive: (id, text) => j(`/stories/${id}/directive`, { method: "POST", body: JSON.stringify({ text }) }),
   pendingFacts: () => j("/facts/pending"),
   reviewFact: (fid, approve) => j(`/facts/${fid}/review`, { method: "POST", body: JSON.stringify({ approve }) }),
+  entityProposals: () => j("/entities/pending"),
+  reviewEntityProposal: (pid, action) => j(`/entities/${pid}/review`, { method: "POST", body: JSON.stringify({ action }) }),
   usage: (id) => j(`/stories/${id}/usage`),
   traces: (id, limit = 100) => j(`/stories/${id}/traces?limit=${limit}`),
   codex: (id) => j(`/stories/${id}/codex`),

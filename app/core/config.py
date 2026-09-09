@@ -39,6 +39,7 @@ class AgentRole(str, Enum):
     WRITER = "WRITER"              # 写作 — 强(默认,可配置降档)
     EVENT = "EVENT"                # 事实抽取 — 中
     CHARACTER = "CHARACTER"        # 角色管理 — 便宜
+    ENTITY = "ENTITY"              # 实体消歧裁决(ADR-0015)— 便宜
     SUMMARY = "SUMMARY"            # 摘要 — 便宜
     EMBEDDING = "EMBEDDING"        # embedding 独立配置
 
@@ -52,6 +53,7 @@ DEFAULT_MODELS: dict[AgentRole, str] = {
     AgentRole.WRITER: "glm-5",
     AgentRole.EVENT: "deepseek-v3",
     AgentRole.CHARACTER: "deepseek-v3",
+    AgentRole.ENTITY: "deepseek-v3",
     AgentRole.SUMMARY: "deepseek-v3",
     AgentRole.EMBEDDING: "qwen3.7-text-embedding",
 }

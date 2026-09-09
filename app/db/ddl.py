@@ -157,15 +157,17 @@ CREATE TABLE IF NOT EXISTS temporal_relations (
   branch_id   TEXT NOT NULL
 );
 
--- ========== Wiki 实体与链接图(ADR-0002)==========
+-- ========== Wiki 实体与链接图(ADR-0002;ADR-0015 激活)==========
 
 CREATE TABLE IF NOT EXISTS entities (
   id          TEXT PRIMARY KEY,
   story_id    TEXT NOT NULL REFERENCES stories(id),
-  type        TEXT NOT NULL,                   -- character|event|faction|location|item
+  type        TEXT NOT NULL,                   -- character|faction|location|item|technique|concept
   name        TEXT NOT NULL,
-  content     TEXT,                            -- wiki 条目正文
+  content     TEXT,                            -- wiki 条目正文(阶段末滚动摘要维护)
   embedding   BLOB,
+  chapter_no  INTEGER,                         -- 首次出现章(NULL=共创种子)
+  status      TEXT NOT NULL DEFAULT 'active',  -- active|merged(被合并保留审计)
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -175,7 +177,33 @@ CREATE TABLE IF NOT EXISTS entity_links (
   story_id    TEXT NOT NULL REFERENCES stories(id),
   from_entity TEXT NOT NULL REFERENCES entities(id),
   to_entity   TEXT NOT NULL REFERENCES entities(id),
-  relation    TEXT
+  relation    TEXT,                            -- 自由文本(ADR-0015 裁决④)
+  chapter_no  INTEGER                          -- 关系确立章(NULL=共创种子;阶段滚动锚点)
+);
+CREATE INDEX IF NOT EXISTS idx_links_story ON entity_links(story_id);
+
+-- 实体别名(ADR-0015 去重确定性层:道号/俗称/尊称 -> 实体)
+CREATE TABLE IF NOT EXISTS entity_aliases (
+  alias       TEXT NOT NULL,
+  story_id    TEXT NOT NULL REFERENCES stories(id),
+  entity_id   TEXT NOT NULL REFERENCES entities(id),
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (story_id, alias)                -- 同书别名唯一:先注册者得
+);
+
+-- 合并提案(ADR-0015:LLM 裁决 uncertain 才入队;人工裁决持久生效)
+CREATE TABLE IF NOT EXISTS entity_merge_proposals (
+  id            TEXT PRIMARY KEY,
+  story_id      TEXT NOT NULL REFERENCES stories(id),
+  candidate_name TEXT NOT NULL,
+  candidate_entity_id TEXT REFERENCES entities(id),  -- 先写后合并的候选条目
+  target_entity_id TEXT NOT NULL REFERENCES entities(id),
+  similarity    REAL,
+  evidence      TEXT,                          -- 相似度+共现+关系重合等裁决证据
+  status        TEXT NOT NULL DEFAULT 'pending', -- pending|merged|new|ignored
+  chapter_no    INTEGER,
+  created_at    TEXT NOT NULL,
+  decided_at    TEXT
 );
 
 -- ========== 权限(ADR-0003/0006:表级 + story 隔离)==========
@@ -258,8 +286,31 @@ ALL_TABLES = [
     "facts", "beliefs", "fact_visibility",
     "characters", "chapters", "paragraphs", "chapter_summaries",
     "plot_threads", "temporal_relations",
-    "entities", "entity_links",
+    "entities", "entity_links", "entity_aliases", "entity_merge_proposals",
     "agent_acl",
     "review_results", "usage_log", "agent_traces", "retrieval_audit",
     "user_directives",
 ]
+
+# 轻量迁移:既有库补列/补索引(CREATE IF NOT EXISTS 不覆盖已存在的表)。
+# 引用新增列的索引必须在这里、ALTER 之后建——放在 SCHEMA_SQL 里会在老库上
+# 因"表已存在被跳过、列还不存在"而失败(no such column)。
+_MIGRATIONS = [
+    ("entities", "chapter_no", "ALTER TABLE entities ADD COLUMN chapter_no INTEGER"),
+    ("entities", "status", "ALTER TABLE entities ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
+    ("entity_links", "chapter_no", "ALTER TABLE entity_links ADD COLUMN chapter_no INTEGER"),
+    # 索引(table, 列校验放宽为表存在即建,IF NOT EXISTS 幂等)
+    ("entities", "__idx_entities_story__",
+     "CREATE INDEX IF NOT EXISTS idx_entities_story ON entities(story_id, status)"),
+]
+
+
+def migrate(conn) -> None:
+    existing_tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    for table, col, sql in _MIGRATIONS:
+        if table not in existing_tables:
+            continue   # 全新建库:SCHEMA_SQL 已含新列,无需迁移
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            conn.execute(sql)

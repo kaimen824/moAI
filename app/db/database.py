@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from app.db.ddl import SCHEMA_SQL
+from app.db.ddl import SCHEMA_SQL, migrate
 from app.db.seed import build_seed
 
 
@@ -27,6 +27,7 @@ def init_db(db_path: str | Path, *, seed_acl: bool = True) -> sqlite3.Connection
     """初始化数据库:建全表 + (可选)写入 agent_acl 种子。幂等。"""
     conn = connect(db_path)
     conn.executescript(SCHEMA_SQL)
+    migrate(conn)   # 既有库补列(entities.status 等,ADR-0015)
     if seed_acl:
         conn.executemany(
             "INSERT OR REPLACE INTO agent_acl (agent_name, data_domain, can_read, can_write) "

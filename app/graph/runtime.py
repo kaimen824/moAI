@@ -20,9 +20,10 @@ from typing import Optional
 from app.core.llm.base import LLMResponse, UsageRecord
 from app.core.llm.facade import LLMFacade
 from app.db.database import init_db
+from app.memory.entity import EntityService
 from app.memory.repository import AgentContext, Repository
-from app.memory.retrieval import RetrievalService
-from app.memory.schemas import ChapterRow, Fact, VisibilityEntry
+from app.memory.retrieval import RetrievalService, encode_embedding
+from app.memory.schemas import ChapterRow, EntityLink, EntityRow, Fact, VisibilityEntry
 from app.observability.usage_log import make_usage_sink
 
 
@@ -45,6 +46,7 @@ class Deps:
     repo: Repository
     retrieval: RetrievalService
     llm: LLMFacade
+    entities: EntityService | None = None    # 实体层(ADR-0015:消歧漏斗/合并执行)
     embed_fn: object = None              # texts -> vectors(定稿时为 facts/摘要算 embedding)
     # SSE 事件总线:按 story(thread)隔离的广播 + 历史(刷新/断线后前端可恢复流程)
     _subscribers: list = field(default_factory=list)   # [(thread_id, queue)]
@@ -229,20 +231,105 @@ class Deps:
         return stage_outline[:300]
 
     def character_name_map(self, state: dict) -> dict[str, str]:
-        ctx = AgentContext("supervisor", state.get("story_id", ""))
-        return {c.name: c.id for c in self.repo.get_characters(ctx)}
+        """名字 -> 角色 id(ADR-0015 升级:并入实体别名表,修别称盲区)。
+
+        本名精确优先;别名(道号/俗称/尊称)经 characters.entity_id 关联补入。
+        消歧正确性由别名注册时的实体层保证(同书别名唯一,先注册者得)。
+        """
+        story_id = state.get("story_id", "")
+        ctx = AgentContext("supervisor", story_id)
+        mapping = {c.name: c.id for c in self.repo.get_characters(ctx)}
+        rows = self.repo.conn.execute(
+            "SELECT a.alias, c.id FROM entity_aliases a"
+            " JOIN characters c ON c.entity_id = a.entity_id AND c.story_id = a.story_id"
+            " WHERE a.story_id=?", (story_id,)).fetchall()
+        for r in rows:
+            mapping.setdefault(r["alias"], r["id"])
+        return mapping
 
     def persist_characters(self, state: dict) -> list[str]:
-        """共创:角色草案落库,返回 [name -> id 映射更新到 drafts]。"""
-        ctx = AgentContext("character_manager", state["story_id"])
-        ids = []
-        for d in state.get("character_drafts", []):
-            from app.memory.schemas import CharacterRow
-            cid = self.repo.upsert_character(ctx, CharacterRow(
-                id="", story_id="", name=d.get("name", "未命名"),
-                profile=d.get("profile", "")))
-            d["id"] = cid
-            ids.append(cid)
+        """共创落库(确认总大纲时):角色卡 + 实体种子(ADR-0015)。
+
+        角色实体由代码确定性生成(与角色卡同名同文,零对齐风险),entity_id 回写
+        characters——检索链接扩展与别名识别从第一章即生效;势力/地点/物品等种子
+        实体与链接来自共创 LLM 抽取(entity_drafts 暂存,确认前零残留)。
+        实体写走 entity_manager 身份(单写者不变式);embedding 失败降级 None。
+        """
+        story_id = state["story_id"]
+        ctx = AgentContext("character_manager", story_id)
+        ectx = AgentContext("entity_manager", story_id)
+        seeds = state.get("entity_drafts") or {}
+        char_aliases = {a.get("name"): (a.get("aliases") or [])
+                        for a in seeds.get("character_aliases", [])}
+
+        def _upsert_alias(alias: str, entity_id: str) -> None:
+            alias = (alias or "").strip()
+            if alias:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO entity_aliases"
+                    " (alias, story_id, entity_id, created_at) VALUES (?,?,?,?)",
+                    (alias, story_id, entity_id, _now()))
+
+        with self.run_lock:
+            name_to_eid: dict[str, str] = {}
+            ids: list[str] = []
+            # 1) 角色卡 + 角色实体(确定性)
+            for d in state.get("character_drafts", []):
+                from app.memory.schemas import CharacterRow
+                name = d.get("name", "未命名")
+                cid = self.repo.upsert_character(ctx, CharacterRow(
+                    id="", story_id="", name=name,
+                    profile=d.get("profile", "")))
+                d["id"] = cid
+                ids.append(cid)
+                eid = self.repo.upsert_entity(ectx, EntityRow(
+                    id="", story_id="", type="character", name=name,
+                    content=d.get("profile", "")))
+                d["entity_id"] = eid
+                name_to_eid[name] = eid
+                self.conn.execute(
+                    "UPDATE characters SET entity_id=?, updated_at=? WHERE id=?",
+                    (eid, _now(), cid))
+                for a in char_aliases.get(name, []):
+                    _upsert_alias(a, eid)
+            # 2) 种子实体(势力/地点/物品/功法/概念)
+            for e in seeds.get("entities", []):
+                name = (e.get("name") or "").strip()
+                if not name or name in name_to_eid:
+                    continue
+                eid = self.repo.upsert_entity(ectx, EntityRow(
+                    id="", story_id="", type=e.get("type", "concept"),
+                    name=name, content=e.get("content", "")))
+                name_to_eid[name] = eid
+                for a in e.get("aliases", []) or []:
+                    _upsert_alias(a, eid)
+            # 3) 初始链接(from/to 名字对;解析不了的丢弃)
+            links = [EntityLink(id="", story_id="",
+                                from_entity=name_to_eid[(l.get("from") or "").strip()],
+                                to_entity=name_to_eid[(l.get("to") or "").strip()],
+                                relation=(l.get("relation") or "")[:120])
+                     for l in seeds.get("links", [])
+                     if (l.get("from") or "").strip() in name_to_eid
+                     and (l.get("to") or "").strip() in name_to_eid]
+            if links:
+                self.repo.add_entity_links(ectx, links)
+            # 4) 种子实体 embedding(消歧向量层;失败降级 None 不阻塞)
+            if self.embed_fn is not None:
+                ents = self.conn.execute(
+                    "SELECT id, name, content FROM entities"
+                    " WHERE story_id=? AND embedding IS NULL", (story_id,)).fetchall()
+                if ents:
+                    try:
+                        vectors = self.embed_fn(
+                            [f"{r['name']}:{(r['content'] or '')[:200]}" for r in ents])
+                        for r, v in zip(ents, vectors):
+                            if v:
+                                self.conn.execute(
+                                    "UPDATE entities SET embedding=? WHERE id=?",
+                                    (encode_embedding(v), r["id"]))
+                    except Exception:
+                        pass
+            self.conn.commit()
         return ids
 
     def log_review(self, state: dict, *, reviewer: str, verdict: dict, round_no: int,
@@ -263,6 +350,29 @@ class Deps:
                  1 if forced else 0, _now()),
             )
             self.conn.commit()
+
+    # ---- 实体合并提案:人工裁决入口(API 层)----
+
+    def resolve_entity_proposal(self, proposal_id: str, action: str) -> dict:
+        """裁决合并提案:merge=执行归一(链接重定向+别名吸收);new/ignore=登记裁决。
+
+        裁决持久生效(ADR-0015):后续同名候选按此规则自动处理,不再重复入队。
+        """
+        with self.run_lock:
+            row = self.conn.execute(
+                "SELECT * FROM entity_merge_proposals WHERE id=? AND status='pending'",
+                (proposal_id,)).fetchone()
+            if not row:
+                raise LookupError(f"pending proposal not found: {proposal_id}")
+            p = dict(row)
+            if action == "merge":
+                self.entities.execute_merge(self.conn, p)
+            else:
+                self.conn.execute(
+                    "UPDATE entity_merge_proposals SET status=?, decided_at=? WHERE id=?",
+                    ("new" if action == "new" else "ignored", _now(), proposal_id))
+            self.conn.commit()
+            return p
 
     # ---- 定稿:编排原子性落库(单事务,ADR-0003 写链路)----
     def _fact_supersede_target(self, story_id: str, branch: str, f: dict,
@@ -305,11 +415,15 @@ class Deps:
         changes = state.get("fact_changes", {})
         chapter_id = uuid.uuid4().hex
 
-        # 事务外预计算 embedding(facts 去重后的内容 + 章摘要);
+        # 事务外预计算 embedding(facts 去重后的内容 + 章摘要 + 新实体条目);
         # 失败降级为 None——不阻塞定稿,仅损失向量检索能力
         emb_contents: list[str] = [f.get("content", "").strip()
                                    for f in changes.get("facts", [])]
         emb_contents.append(state.get("chapter_summary", ""))
+        entity_changes = state.get("entity_changes") or {}
+        ent_emb_start = len(emb_contents)
+        emb_contents.extend(
+            f"{e['name']}:{e.get('content', '')}" for e in entity_changes.get("new_entities", []))
         emb_vecs: list[bytes | None] = [None] * len(emb_contents)
         if self.embed_fn is not None:
             try:
@@ -428,6 +542,46 @@ class Deps:
                     (uuid.uuid4().hex, story_id, chapter_no, "stage",
                      state["stage_summary"], branch, None, _now()),
                 )
+            # 7) 实体族(ADR-0015):新实体/别名/链接/合并提案 + 阶段末条目滚动
+            for i, e in enumerate(entity_changes.get("new_entities", [])):
+                self.conn.execute(
+                    "INSERT INTO entities (id, story_id, type, name, content, embedding,"
+                    " chapter_no, status, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (e["id"], story_id, e.get("type", "concept"), e["name"],
+                     e.get("content", ""),
+                     emb_vecs[ent_emb_start + i] if ent_emb_start + i < len(emb_vecs) else None,
+                     chapter_no, "active", _now(), _now()),
+                )
+            for a in entity_changes.get("aliases", []):
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO entity_aliases"
+                    " (alias, story_id, entity_id, created_at) VALUES (?,?,?,?)",
+                    (a["alias"], story_id, a["entity_id"], _now()),
+                )
+            for l in entity_changes.get("links", []):
+                self.conn.execute(
+                    "INSERT INTO entity_links (id, story_id, from_entity, to_entity,"
+                    " relation, chapter_no) VALUES (?,?,?,?,?,?)",
+                    (l["id"], story_id, l["from_entity"], l["to_entity"],
+                     l.get("relation", ""), l.get("chapter_no")),
+                )
+            for p in entity_changes.get("proposals", []):
+                self.conn.execute(
+                    "INSERT INTO entity_merge_proposals (id, story_id, candidate_name,"
+                    " candidate_entity_id, target_entity_id, similarity, evidence,"
+                    " status, chapter_no, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, story_id, p["candidate_name"],
+                     p.get("candidate_entity_id"), p["target_entity_id"],
+                     p.get("similarity"), p.get("evidence", ""),
+                     "pending", p.get("chapter_no"), _now()),
+                )
+            for u in state.get("entity_content_updates") or []:
+                if u.get("entity_id") and u.get("content"):
+                    self.conn.execute(
+                        "UPDATE entities SET content=?, updated_at=? WHERE id=? AND story_id=?",
+                        (u["content"], _now(), u["entity_id"], story_id),
+                    )
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -480,4 +634,5 @@ def build_engine(db_path: str | Path, llm: LLMFacade | None = None,
         embed_fn = _embed
     deps.embed_fn = embed_fn
     deps.retrieval = RetrievalService(repo, embed_fn=embed_fn)
+    deps.entities = EntityService(repo, embed_fn=embed_fn)
     return deps, conn

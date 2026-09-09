@@ -318,6 +318,8 @@ retrieval_audit     检索审计(caller/query/返回条数/耗时)
 - 三级记忆 / POV 投影 / facts-beliefs 分表 / 置信度分层 + 抽检队列 / facts 版本链推翻(含 setting 场景链)
 - 双评审 fan-out + 重写上限转人工(needs_user)/ 伏笔人工复核 / 三中断点
 - 分层摘要:chapter + **stage(实现期新增,补齐设计枚举)**;story_recap 多维回顾
+- **实体知识库(ADR-0015,2026-09-09 激活):共创种子/每章消歧(先查询再语义识别)/
+  阶段末条目滚动/链接扩展一跳进 writer 上下文/别名识别/Codex 实体图谱/合并提案人工队列**
 - 检索:结构化主路 + 向量兜底(embedding 已接入,含"世界背景"语义渲染)
 - 协作式中断(用户按钮)+ 循环自动中断(细纲 3 轮上限 + recursion_limit 兜底)
 - 全链路可观测:agent_traces 落库 + SSE 实时 + 历史回溯 UI
@@ -335,8 +337,10 @@ retrieval_audit     检索审计(caller/query/返回条数/耗时)
 
 ### 未实现(表先建,功能未排期——空转表)
 
-temporal_relations(时间偏序)、entities/entity_links(Wiki 图)、paragraphs(段落下钻)、
+temporal_relations(时间偏序)、paragraphs(段落下钻)、
 volume/book 摘要层、known_partial(部分知晓)
+
+(entities/entity_links 已随 ADR-0015 激活转正,移出本清单)
 
 ### 明确降级(依赖或场景未到)
 
@@ -353,3 +357,20 @@ Agent 无旁路"由此降级为:**读路径(检索)fail-closed 强制;写路径�
 **ADR-0014 向量兜底的世界背景语义**:兜底召回不做可见性过滤(区别于 POV 主路)——
 无 visibility 行的客观事实(环境/背景)正是长尾召回的目标;POV 边界由 writer 渲染层
 区分语义保障("世界背景:叙事可用,角色言行不得引用")。
+
+**ADR-0015 实体层激活(先查询再语义识别)**:entities/entity_links 从空转表转正,
+落地 EntityService(app/memory/,与 RetrievalService 同层,经 Deps 注入)。
+四项所有者裁决(2026-09-09):
+① 范围=全量(角色/势力/地点/物品/功法/概念),接受抽取噪声换长尾丰富;
+② 条目内容=阶段末滚动摘要,复用 stage 边界机制,便宜模型并入该管道;
+③ 去重=三层漏斗后置裁决——精确名/共创别名表(确定性)→ 向量 top-k 召回(非阈值二分)
+   → LLM 批量语义裁决(结构化 verdict: same/new/uncertain),仅 uncertain 进抽检队列
+   (复用 facts 抽检骨架)。放置位置=后置管道步骤而非 function calling 工具:
+   消歧是无条件批量行为,不构成"模型决定是否调用"的工具语义(参见 ADR-0016 候选讨论);
+   候选先写后合并(合并可逆、漏检不可逆),双阈值控队列量;
+④ relation=自由文本,接受同义碎片化,消费端靠向量聚合同义关系。
+消费端默认(可逆,未单独裁决):writer 渲染一跳邻居条目摘要;Codex 展示实体图;
+评审基线暂不含实体图。build_context 在场角色识别升级为实体别名表匹配
+(修复 name-in-brief 字符串包含的别称盲区)。
+权衡:LLM 裁决每章多一次便宜模型调用 + uncertain 人工尾巴,换阈值方案无法覆盖的
+道号/俗称/尊称消歧;先写后合并接受瞬时重复条目。

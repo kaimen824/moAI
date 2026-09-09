@@ -167,4 +167,26 @@ class SummaryNode(BaseAgent):
                     story_id=story_id,
                 )
                 update["stage_summary"] = merged
+                # 阶段末实体条目滚动(ADR-0015 裁决②):本阶段被触达的实体,
+                # 条目内容并入新剧情——防百章后条目失真
+                from app.memory.repository import AgentContext
+                touched = deps.entities.stage_touched(
+                    AgentContext("entity_manager", story_id), stage_start, chapter_no)
+                if touched:
+                    upd = self.ask_json(
+                        "你是设定条目维护器。把本阶段剧情并入既有实体条目,"
+                        "严格按 JSON 输出:"
+                        '{"updates":[{"name":"实体名","content":"并入新剧情后的完整条目(2-4 句,客观陈述)"}]}。'
+                        "只列本阶段有新剧情的实体;没有新剧情的保持原样不输出。",
+                        f"[本阶段剧情摘要]\n{merged}\n\n[待更新条目]\n"
+                        + "\n".join(f"- {t['name']}({t['type']}): {t['content'] or '(空)'}"
+                                    for t in touched),
+                        stage="entity_stage_update",
+                        story_id=story_id,
+                    )
+                    by_name = {t["name"]: t["id"] for t in touched}
+                    update["entity_content_updates"] = [
+                        {"entity_id": by_name[u["name"]], "content": u["content"]}
+                        for u in upd.get("updates", [])
+                        if u.get("name") in by_name and u.get("content")]
         return update

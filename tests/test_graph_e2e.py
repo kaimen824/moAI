@@ -20,6 +20,16 @@ SCRIPTS: dict[str, str | dict] = {
     "init_characters": {"characters": [
         {"name": "沈砚", "profile": "主角;驽钝但坚韧"},
         {"name": "白芷", "profile": "师妹;知晓秘密"}]},
+    "init_entities": {
+        "entities": [
+            {"name": "青岩宗", "type": "faction", "content": "山村所属的修仙宗门",
+             "aliases": ["宗门"]},
+            {"name": "古碑", "type": "item", "content": "暴雨夜现世的神秘古碑",
+             "aliases": []}],
+        "character_aliases": [{"name": "沈砚", "aliases": ["砚小子"]}],
+        "links": [
+            {"from": "沈砚", "to": "古碑", "relation": "发现"},
+            {"from": "青岩宗", "to": "古碑", "relation": "镇守"}]},
     "master_outline": "主线:阻止旧神复苏\n卷一(1-3章):山村异变\n卷二(4-6章):入宗门",
     "review_master_outline": {"verdict": "pass",
                               "scores": {"consistency": 9, "structure": 8}, "feedback": "ok"},
@@ -47,6 +57,11 @@ SCRIPTS: dict[str, str | dict] = {
         {"name": "沈砚", "profile_append": "觉醒了感应古碑的能力"}]},
     "chapter_summary": "暴雨夜沈砚发现古碑,力量初醒。",
     "stage_summary": "阶段聚合:沈砚发现古碑并觉醒力量,踏上离村旅途。",
+    "entity_resolve": {"decisions": [
+        {"name": "剑尘真人", "decision": "same", "target": "沈砚",
+         "evidence": "沈砚觉醒后的道号"}]},
+    "entity_stage_update": {"updates": [
+        {"name": "黑风寨", "content": "山村附近的马匪寨,已被剑尘真人荡平"}]},
 }
 
 
@@ -321,6 +336,69 @@ def test_e2e_rewrite_exhausted_notifies_user(engine, monkeypatch):
     assert rows[-1]["reviewer"] == "merge"
     assert rows[-1]["verdict"] == "needs_user"
     assert rows[-1]["forced_pass"] == 1
+
+
+def test_e2e_entity_pipeline(engine, monkeypatch):
+    """实体层全链路(ADR-0015):共创种子落库 -> 抽取候选 -> 消歧(same 道号合并/
+    new 新建)-> 链接解析 -> 阶段末条目滚动 -> 检索一跳/别名识别生效。"""
+    monkeypatch.setitem(SCRIPTS, "stage_outline",
+                        "1| 山村暴雨,沈砚发现古碑|沈砚,白芷|异象开启\n"
+                        "2| 古碑力量觉醒|沈砚|力量觉醒")   # 阶段只到 ch2 -> ch2 为阶段末
+    monkeypatch.setitem(SCRIPTS, "extract_facts", {
+        "facts": [{"content": "沈砚在暴雨夜发现古碑", "type": "event",
+                   "confidence": "high", "visible_to": ["沈砚", "白芷"]}],
+        "beliefs": [],
+        "entities": [
+            {"name": "古碑", "type": "item", "description": "暴雨夜现世"},   # 精确命中种子
+            {"name": "剑尘真人", "type": "character", "description": "沈砚觉醒后的道号"},
+            {"name": "黑风寨", "type": "faction", "description": "山村附近的马匪寨"},
+        ],
+        "links": [{"from": "剑尘真人", "to": "古碑", "relation": "觉醒于"}],
+        "conflicts": []})
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("实体测试", "测试")
+    cfg = {"configurable": {"thread_id": "e2e-entity"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 2, "initial_input": "x"}, cfg)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)   # 总大纲确认 -> 种子落库
+    # 共创种子:角色实体(确定性)+ 势力/物品实体 + 别名 + 初始链接,确认时一并落库
+    ents = {e["name"]: dict(e) for e in conn.execute(
+        "SELECT * FROM entities WHERE status='active'").fetchall()}
+    assert set(ents) >= {"沈砚", "白芷", "青岩宗", "古碑"}
+    assert ents["沈砚"]["type"] == "character"
+    aliases = {r["alias"]: r["entity_id"] for r in conn.execute(
+        "SELECT alias, entity_id FROM entity_aliases").fetchall()}
+    assert aliases["砚小子"] == ents["沈砚"]["id"]
+    assert aliases["宗门"] == ents["青岩宗"]["id"]
+    shen = conn.execute("SELECT entity_id FROM characters WHERE name='沈砚'").fetchone()
+    assert shen["entity_id"] == ents["沈砚"]["id"]   # 回写:链接扩展从此生效
+
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)   # 细纲确认 -> ch1 写作
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)  # ch1 定稿
+    # ch1 消歧结果:剑尘真人 same->沈砚(别名吸收);黑风寨 new;链接经别名解析
+    aliases = {r["alias"]: r["entity_id"] for r in conn.execute(
+        "SELECT alias, entity_id FROM entity_aliases").fetchall()}
+    assert aliases["剑尘真人"] == ents["沈砚"]["id"]
+    links = [(r["from_entity"], r["to_entity"], r["relation"]) for r in conn.execute(
+        "SELECT from_entity, to_entity, relation FROM entity_links").fetchall()]
+    assert (ents["沈砚"]["id"], ents["古碑"]["id"], "觉醒于") in links   # 别名解析到本体
+    heifeng = conn.execute(
+        "SELECT id, content, chapter_no FROM entities WHERE name='黑风寨'").fetchone()
+    assert heifeng["chapter_no"] == 1 and heifeng["content"]
+
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)  # ch2 定稿=阶段末
+    # 阶段末滚动:黑风寨条目并入新剧情
+    heifeng2 = conn.execute(
+        "SELECT content FROM entities WHERE id=?", (heifeng["id"],)).fetchone()
+    assert "荡平" in heifeng2["content"]
+
+    # 消费端:别名识别(剑尘真人 -> 沈砚角色 id)+ 一跳邻居进 bundle
+    state = {"story_id": story_id, "chapter_no": 3}
+    name_map = deps.character_name_map(state)
+    shen_char = conn.execute(
+        "SELECT id FROM characters WHERE name='沈砚'").fetchone()["id"]
+    assert name_map["剑尘真人"] == shen_char and name_map["砚小子"] == shen_char
 
 
 def test_commit_finalize_dedup_and_setting_chain(tmp_path):

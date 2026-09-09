@@ -2,11 +2,16 @@ import { useEffect, useState } from 'react'
 import {
   Badge, Card, Flex, Heading, ScrollArea, Separator, Tabs, Text,
 } from '@radix-ui/themes'
-import { NotebookIcon, PathIcon, PersonIcon } from '@phosphor-icons/react'
+import { GraphIcon, NotebookIcon, PathIcon, PersonIcon } from '@phosphor-icons/react'
 import { api } from '../api.js'
 import { useApp } from '../App.jsx'
 
-/* 设定集(Codex):角色小传 / 伏笔台账 / 世界记忆(当前有效,排除被推翻) */
+const TYPE_ZH = {
+  character: '角色', faction: '势力', location: '地点',
+  item: '物品', technique: '功法', concept: '概念',
+}
+
+/* 设定集(Codex):角色小传 / 实体图谱 / 伏笔台账 / 世界记忆(当前有效,排除被推翻) */
 export default function CodexPage({ storyId }) {
   const { t } = useApp()
   const [data, setData] = useState(null)
@@ -33,6 +38,7 @@ export default function CodexPage({ storyId }) {
         <Tabs.Root value={tab} onValueChange={setTab}>
           <Tabs.List>
             <Tabs.Trigger value="characters">角色({data.characters?.length || 0})</Tabs.Trigger>
+            <Tabs.Trigger value="entities">实体图谱({data.entities?.length || 0})</Tabs.Trigger>
             <Tabs.Trigger value="threads">伏笔({data.plot_threads?.length || 0})</Tabs.Trigger>
             <Tabs.Trigger value="memory">世界记忆({data.facts?.length || 0})</Tabs.Trigger>
             <Tabs.Trigger value="outline">总大纲</Tabs.Trigger>
@@ -53,6 +59,43 @@ export default function CodexPage({ storyId }) {
                 </Card>
               ))}
               {!data.characters?.length && <Text size="2" color="gray">暂无角色</Text>}
+            </Flex>
+          )}
+
+          {tab === 'entities' && (
+            <Flex direction="column" gap="2">
+              {data.entities?.map(e => {
+                const rels = (data.entity_links || []).filter(
+                  l => l.from_name === e.name || l.to_name === e.name)
+                return (
+                  <Card key={e.id} size="2" variant="surface" className="proc-enter">
+                    <Flex gap="2" align="center" wrap="wrap">
+                      <GraphIcon size={14} color="var(--accent-11)" />
+                      <Text size="3" weight="bold" className="reader-serif">{e.name}</Text>
+                      <Badge color="gray" variant="soft">{TYPE_ZH[e.type] || e.type}</Badge>
+                      {e.chapter_no
+                        && <Text size="1" color="gray">第 {e.chapter_no} 章登场</Text>}
+                    </Flex>
+                    {e.content
+                      && <Text as="div" size="2" color="gray" mt="1"
+                        style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{e.content}</Text>}
+                    {rels.length > 0 && (
+                      <Flex direction="column" gap="1" mt="2">
+                        <Text size="1" weight="bold" color="gray">关联</Text>
+                        {rels.map((l, i) => (
+                          <Text key={i} size="1" color="gray" px="1">
+                            {l.from_name === e.name ? `→ ${l.to_name}` : `← ${l.from_name}`}
+                            <Badge size="1" color="violet" variant="soft"
+                              style={{ marginLeft: 6 }}>{l.relation}</Badge>
+                          </Text>
+                        ))}
+                      </Flex>
+                    )}
+                  </Card>
+                )
+              })}
+              {!data.entities?.length
+                && <Text size="2" color="gray">暂无实体——从共创设定与正文中逐渐沉淀</Text>}
             </Flex>
           )}
 

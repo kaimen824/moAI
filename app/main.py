@@ -85,7 +85,7 @@ _PAYLOAD_KEYS = (
     "world_settings", "character_drafts", "master_outline", "stage_outline",
     "chapter_brief", "outline_review", "quality_review", "merged_verdict",
     "fact_changes", "character_changes", "chapter_summary", "stage_summary",
-    "thread_changes", "context_stats", "user_directives",
+    "thread_changes", "context_stats", "user_directives", "entity_changes",
     "rewrite_exhausted", "stage_end_chapter", "stage_regen_count",
     "chapter_no",            # 前端时间线按章分组的依据
 )
@@ -314,10 +314,23 @@ def codex(story_id: str):
     outline = deps.conn.execute(
         "SELECT content FROM outlines WHERE story_id=? AND status='confirmed'"
         " ORDER BY version_no DESC LIMIT 1", (story_id,)).fetchone()
+    # 实体图(ADR-0015):active 条目 + 链接(带双方名字,前端直接渲染)
+    entities = deps.conn.execute(
+        "SELECT id, type, name, content, chapter_no FROM entities"
+        " WHERE story_id=? AND status='active' ORDER BY COALESCE(chapter_no, 0), created_at",
+        (story_id,)).fetchall()
+    links = deps.conn.execute(
+        "SELECT l.relation, l.chapter_no, ef.name AS from_name, et.name AS to_name"
+        " FROM entity_links l"
+        " JOIN entities ef ON ef.id = l.from_entity"
+        " JOIN entities et ON et.id = l.to_entity"
+        " WHERE l.story_id=? ORDER BY COALESCE(l.chapter_no, 0)", (story_id,)).fetchall()
     return {
         "characters": [dict(r) for r in characters],
         "plot_threads": [dict(r) for r in threads],
         "facts": [dict(r) for r in facts],
+        "entities": [dict(r) for r in entities],
+        "entity_links": [dict(r) for r in links],
         "outline": outline["content"] if outline else None,
     }
 
@@ -346,6 +359,46 @@ def review_fact(fact_id: str, req: FactReview):
     if cur.rowcount == 0:
         raise HTTPException(404, "pending fact not found")
     return {"fact_id": fact_id, "status": new_status}
+
+
+# ================= 实体合并提案(ADR-0015:LLM uncertain 才入队)=================
+
+@app.get("/entities/pending")
+@locked
+def pending_entity_proposals():
+    """AI 拿不准的实体合并提案(先写后合并:候选已独立落库,裁决后归一)。"""
+    deps, _ = engine()
+    rows = deps.conn.execute(
+        "SELECT p.*, s.title AS story_title,"
+        "       cf.name AS candidate_label, tf.name AS target_label"
+        " FROM entity_merge_proposals p"
+        " JOIN stories s ON s.id = p.story_id"
+        " LEFT JOIN entities cf ON cf.id = p.candidate_entity_id"
+        " LEFT JOIN entities tf ON tf.id = p.target_entity_id"
+        " WHERE p.status='pending' ORDER BY p.created_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+class EntityProposalReview(BaseModel):
+    action: str                   # merge | new | ignore
+
+
+@app.post("/entities/{proposal_id}/review")
+@locked
+def review_entity_proposal(proposal_id: str, req: EntityProposalReview):
+    """人工裁决:merge=执行归一(链接重定向/别名吸收/候选置 merged);
+    new=独立实体;ignore=维持现状且不再重复提案。裁决持久生效。"""
+    deps, _ = engine()
+    if req.action not in ("merge", "new", "ignore"):
+        raise HTTPException(400, "action must be merge|new|ignore")
+    try:
+        p = deps.resolve_entity_proposal(proposal_id, req.action)
+    except LookupError:
+        raise HTTPException(404, "pending proposal not found")
+    status = "merged" if req.action == "merge" else (
+        "new" if req.action == "new" else "ignored")
+    return {"proposal_id": proposal_id, "status": status,
+            "candidate": p.get("candidate_name")}
 
 
 class DirectiveRequest(BaseModel):

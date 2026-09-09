@@ -100,10 +100,12 @@ class PlotThread:
 class EntityRow:
     id: str
     story_id: str
-    type: str                    # character|event|faction|location|item
+    type: str                    # character|faction|location|item|technique|concept
     name: str
-    content: str = ""
+    content: str = ""            # wiki 条目正文(阶段末滚动摘要维护)
     embedding: bytes | None = None
+    chapter_no: int | None = None   # 首次出现章(None=共创种子)
+    status: str = "active"       # active|merged(ADR-0015:被合并保留审计)
     created_at: str = ""
     updated_at: str = ""
 
@@ -114,7 +116,8 @@ class EntityLink:
     story_id: str
     from_entity: str
     to_entity: str
-    relation: str = ""
+    relation: str = ""           # 自由文本(ADR-0015 裁决④)
+    chapter_no: int | None = None
 
 
 @dataclass

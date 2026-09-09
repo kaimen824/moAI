@@ -19,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.graph.agents.character_manager import InitCharactersNode, UpdateCharactersNode
+from app.graph.agents.entity_resolver import EntityResolveNode
 from app.graph.agents.event_extractor import EventExtractNode
 from app.graph.agents.outline_reviewer import (
     ReviewDraftOutline,
@@ -305,6 +306,9 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_node("user_review_chapter", functools.partial(user_review_chapter, deps=deps))
     g.add_node("event_extract", _node(EventExtractNode(deps.llm), deps))
     g.add_node("update_characters", _node(UpdateCharactersNode(deps.llm), deps))
+    # 实体消歧(ADR-0015):与角色更新/摘要并列——三者都只依赖抽取产物/草稿,
+    # 同一 super-step 并行,fan-in 到定稿单事务(不给串行链加深度)
+    g.add_node("entity_resolve", _node(EntityResolveNode(deps.llm), deps))
     g.add_node("summary", _node(SummaryNode(deps.llm), deps))
     g.add_node("finalize", _node(finalize, deps))
 
@@ -358,9 +362,12 @@ def build_graph(deps: Deps, checkpointer=None):
         {"rewrite_with_feedback": "write_draft", "finalize": "event_extract"},
     )
 
-    # 定稿管道
+    # 定稿管道:抽取 -> [角色更新 ∥ 实体消歧 ∥ 摘要] -> 单事务定稿(fan-out/fan-in)
     g.add_edge("event_extract", "update_characters")
-    g.add_edge("update_characters", "summary")
+    g.add_edge("event_extract", "entity_resolve")
+    g.add_edge("event_extract", "summary")
+    g.add_edge("update_characters", "finalize")
+    g.add_edge("entity_resolve", "finalize")
     g.add_edge("summary", "finalize")
     g.add_conditional_edges("finalize", route_next, {END: END, "next_chapter": "next_chapter"})
 

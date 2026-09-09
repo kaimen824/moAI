@@ -6,6 +6,11 @@ from app.core.config import AgentRole
 from app.core.llm.base import ChatMessage
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
+_TYPE_ZH = {
+    "character": "角色", "faction": "势力", "location": "地点",
+    "item": "物品", "technique": "功法", "concept": "概念",
+}
+
 
 def render_context(state: dict, *, max_facts: int = 40) -> str:
     """把检索服务组装的 context_bundle 渲染为 prompt 片段(POV 已在检索层过滤)。
@@ -47,6 +52,13 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
             "[世界背景(按本章要点向量召回的远期客观事实——"
             "可用于叙事描写;角色的言行与内心不得引用其中角色不该知晓的信息)]\n" + vh
         )
+    if bundle.get("expanded_entities"):
+        ents = "\n".join(
+            f"- {e['name']}({_TYPE_ZH.get(e.get('type'), e.get('type', '?'))}):"
+            f"{(e.get('content') or '')[:150]}"
+            for e in bundle["expanded_entities"][:8]
+        )
+        parts.append(f"[相关设定(在场角色的关联实体,一跳邻居;照应设定,不得矛盾)]\n{ents}")
     if bundle.get("active_threads"):
         th = "\n".join(f"- {t['description']}" for t in bundle["active_threads"])
         parts.append(f"[活跃伏笔]\n{th}")

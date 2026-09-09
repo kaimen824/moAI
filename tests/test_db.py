@@ -13,13 +13,50 @@ def test_init_creates_all_tables(db):
     }
     missing = set(ALL_TABLES) - names
     assert not missing, f"缺表: {missing}"
-    assert len(ALL_TABLES) == 20   # +agent_traces(全节点可观测)
+    assert len(ALL_TABLES) == 22   # +agent_traces(可观测) +entity_aliases/merge_proposals(ADR-0015)
 
 
 def test_init_is_idempotent(tmp_path):
     path = tmp_path / "again.db"
     init_db(path)
     init_db(path)  # 不应抛异常
+
+
+def test_init_migrates_legacy_entity_tables(tmp_path):
+    """老库升级:entities 无 status/chapter_no 列时,init_db 补列+补索引不炸。
+
+    回归:no such column: status——SCHEMA_SQL 中引用新列的索引在老库上
+    (表已存在被跳过、列还不存在)曾导致启动失败。
+    """
+    path = tmp_path / "legacy.db"
+    import sqlite3
+    conn = sqlite3.connect(str(path))
+    conn.executescript("""
+        CREATE TABLE stories (id TEXT PRIMARY KEY, title TEXT NOT NULL, premise TEXT,
+          status TEXT NOT NULL DEFAULT 'draft', main_branch_id TEXT,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE entities (
+          id TEXT PRIMARY KEY, story_id TEXT NOT NULL, type TEXT NOT NULL,
+          name TEXT NOT NULL, content TEXT, embedding BLOB,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE entity_links (
+          id TEXT PRIMARY KEY, story_id TEXT NOT NULL, from_entity TEXT NOT NULL,
+          to_entity TEXT NOT NULL, relation TEXT);
+        INSERT INTO entities VALUES ('e1','s1','faction','旧门派','旧条目',NULL,
+          '2026-01-01','2026-01-01');
+    """)
+    conn.commit()
+    conn.close()
+
+    conn = init_db(path)   # 老库上重建:迁移补列,不再 no such column
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(entities)")}
+    assert {"status", "chapter_no"} <= cols
+    idx = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='entities'")}
+    assert "idx_entities_story" in idx
+    row = conn.execute("SELECT status, chapter_no, name FROM entities WHERE id='e1'").fetchone()
+    assert row["status"] == "active" and row["chapter_no"] is None   # 既有数据保真
+    conn.close()
 
 
 def test_wal_mode(db):
@@ -45,10 +82,15 @@ def test_acl_seed_writer_assignments(db):
     assert can("reviewer", "plot_threads", "write") == 1
     assert can("reviewer", "facts", "write") == 0
     assert can("reviewer", "facts", "read") == 1
-    # 角色管理:characters/entities 写
+    # 角色管理:characters 写(ADR-0015 起实体族移交 entity_manager,单写者)
     assert can("character_manager", "characters", "write") == 1
-    assert can("character_manager", "entities", "write") == 1
-    assert can("character_manager", "entity_links", "write") == 1
+    assert can("character_manager", "entities", "read") == 1
+    assert can("character_manager", "entities", "write") == 0
+    # 实体管理:实体族全域写(ADR-0015)
+    assert can("entity_manager", "entities", "write") == 1
+    assert can("entity_manager", "entity_links", "write") == 1
+    assert can("entity_manager", "entity_aliases", "write") == 1
+    assert can("entity_manager", "entity_merge_proposals", "write") == 1
     # 大纲 Agent:只读,无任何写权限(裁判员独立性)
     for domain in ("outlines", "facts", "beliefs"):
         assert can("outline_agent", domain, "read") == 1

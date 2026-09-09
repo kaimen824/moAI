@@ -26,13 +26,14 @@ def make_env(db, embed_fn=None):
     event = AgentContext("event_manager", story_id)
 
     hero = repo.upsert_character(char_ctx, CharacterRow(id="", story_id="", name="主角"))
-    # 实体与链接:主角 ↔ 秘密组织(一跳邻居)
-    org = repo.upsert_entity(char_ctx, EntityRow(
+    # 实体与链接:主角 ↔ 秘密组织(一跳邻居)(ADR-0015:实体族写权在 entity_manager)
+    ent_ctx = AgentContext("entity_manager", story_id)
+    org = repo.upsert_entity(ent_ctx, EntityRow(
         id="ent_org", story_id="", type="faction", name="暗影组织", content="反派势力"))
-    hero_ent = repo.upsert_entity(char_ctx, EntityRow(
+    hero_ent = repo.upsert_entity(ent_ctx, EntityRow(
         id="ent_hero", story_id="", type="character", name="主角", content="主角条目"))
-    repo.add_entity_links(char_ctx, [EntityLink(id="", story_id="",
-                                                from_entity=hero_ent, to_entity=org, relation="敌对")])
+    repo.add_entity_links(ent_ctx, [EntityLink(id="", story_id="",
+                                               from_entity=hero_ent, to_entity=org, relation="敌对")])
     repo.conn.execute("UPDATE characters SET entity_id=? WHERE id=?", (hero_ent, hero))
     repo.conn.commit()
 
