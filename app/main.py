@@ -67,6 +67,7 @@ class GenerateRequest(BaseModel):
     initial_input: str = ""
     tags: list[str] = []              # 题材标签(Dify 式 token):独立单元,可多选
     branch_id: str = ""
+    auto_confirm: bool = False        # 自动模式(ADR-0016):细纲/章节闸自动确认
 
 
 class ResumeRequest(BaseModel):
@@ -246,6 +247,7 @@ def generate(story_id: str, req: GenerateRequest):
     return _sse_run(
         {"story_id": story_id, "branch_id": branch,
          "target_chapters": req.target_chapters,
+         "auto_mode": req.auto_confirm,
          "initial_input": premise_part + tags_part + req.initial_input},
         thread_id=story_id,
     )

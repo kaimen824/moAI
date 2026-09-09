@@ -11,6 +11,8 @@ class GraphState(TypedDict, total=False):
     branch_id: str
     target_chapters: int          # 本次运行要产出的章数(端到端/测试用)
     chapters_done: int
+    auto_mode: bool               # 自动模式(ADR-0016):细纲/章节两道闸评审绿则自动确认;
+                                  # 总大纲确认永远人工(书之根基);轮次耗尽强制转人工
 
     # ---- 共创(ADR-0011)----
     initial_input: str            # 用户的世界观构想(共创起点)
@@ -20,6 +22,7 @@ class GraphState(TypedDict, total=False):
     master_outline: str           # 总大纲(含卷结构)
     outline_verdict: dict         # 大纲 Agent 对总大纲的裁决
     outline_confirmed: bool
+    master_regen_count: int       # 总大纲重生成轮次(上限转人工,ADR-0016)
 
     # ---- 阶段与章节 ----
     chapter_no: int

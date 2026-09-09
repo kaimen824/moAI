@@ -67,7 +67,7 @@ class ReviewDraftOutline(BaseAgent):
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
         verdict = self.ask_json(
             _SYSTEM.replace('"structure":0-10', '"fidelity":0-10'),
-            f"[评审对象] 本章正文草稿\n{state.get('draft','')[:5000]}\n\n"
+            f"[评审对象] 本章正文草稿\n{state.get('draft','')}\n\n"
             f"[基准] 本章要点\n{state.get('chapter_brief','')}\n\n"
             f"[基准] 总大纲(当前卷)\n{state.get('master_outline','')[:1500]}\n\n"
             f"[上期衔接(若草稿重演/复述其中已发生事件,判 revise)]\n"

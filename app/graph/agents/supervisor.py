@@ -60,7 +60,8 @@ class GenMasterOutline(BaseAgent):
             stage="master_outline",
             story_id=state.get("story_id", ""),
         )
-        return {"master_outline": outline}
+        return {"master_outline": outline,
+                "master_regen_count": state.get("master_regen_count", 0) + 1}
 
 
 @register_agent

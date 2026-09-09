@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Badge, Button, Card, Checkbox, Flex, Heading, ScrollArea, Spinner,
-  Tabs, Text, TextArea, TextField, Tooltip,
+  Switch, Tabs, Text, TextArea, TextField, Tooltip,
 } from '@radix-ui/themes'
 import {
   CheckCircleIcon, PaperPlaneTiltIcon, PencilSimpleIcon,
@@ -185,6 +185,12 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
   const [tags, setTags] = useState([])
   const [stopping, setStopping] = useState(false)
   const [rightOpen, setRightOpen] = useState(true)
+  // 自动模式(ADR-0016):按书记忆;细纲/章节评审绿则自动确认,总大纲与轮次耗尽仍转人工
+  const [autoMode, setAutoMode] = useState(
+    () => localStorage.getItem('autoMode_' + storyId) === '1')
+  useEffect(() => {
+    localStorage.setItem('autoMode_' + storyId, autoMode ? '1' : '0')
+  }, [storyId, autoMode])
   const curChapterRef = useRef(null)
   const draftRef = useRef(null)
 
@@ -276,7 +282,7 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
     setIntr(null); setMsg(''); setElapsed(0); setStopping(false)
     curChapterRef.current = null
     try {
-      await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput, tags }, onEvent)
+      await api.generate(storyId, { target_chapters: chapters, initial_input: initialInput, tags, auto_confirm: autoMode }, onEvent)
     } catch (e) { setMsg('出错了:' + e.message) }
     setRunning(false)
   }
@@ -342,6 +348,21 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
                   <PaperPlaneTiltIcon size={14} />
                   指示{directiveOpen ? '' : '…'}
                 </Button>
+              </Tooltip>
+              <Tooltip content={autoMode
+                ? '自动模式:阶段细纲与章节审阅在评审通过时自动确认,连续写作不中断;重写达上限时仍会请你裁决。总大纲确认始终保持人工。'
+                : '人工审阅模式:阶段细纲与每一章完成后都会暂停等你确认。'}>
+                <Flex as="span" gap="2" align="center" px="2" style={{
+                  background: autoMode ? 'var(--accent-a3)' : 'var(--gray-a3)',
+                  border: `1px solid ${autoMode ? 'var(--accent-a6)' : 'var(--gray-a5)'}`,
+                  borderRadius: 8,
+                }}>
+                  <Switch size="1" checked={autoMode}
+                    onCheckedChange={setAutoMode} disabled={running} />
+                  <Text size="1" weight="medium" color={autoMode ? undefined : 'gray'}>
+                    {autoMode ? '自动模式' : '人工审阅'}
+                  </Text>
+                </Flex>
               </Tooltip>
               <Text size="2" color="gray">写到第</Text>
               <TextField.Root size="2" type="number" style={{ width: 70 }}

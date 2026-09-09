@@ -30,7 +30,7 @@ class QualityReviewNode(BaseAgent):
                             for t in bundle.get("active_threads", []))
         review = self.ask_json(
             _SYSTEM,
-            f"[本章草稿]\n{state.get('draft','')[:5000]}\n\n"
+            f"[本章草稿]\n{state.get('draft','')}\n\n"
             f"[上期衔接(草稿若重演其中已发生事件,一致性记低分)]\n"
             f"{bundle.get('carryover', '')}\n\n"
             f"[世界已知事实(校验基准,标注章号)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}",

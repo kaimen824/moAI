@@ -401,6 +401,73 @@ def test_e2e_entity_pipeline(engine, monkeypatch):
     assert name_map["剑尘真人"] == shen_char and name_map["砚小子"] == shen_char
 
 
+def test_auto_mode_skips_stage_and_chapter_gates(engine):
+    """自动模式(ADR-0016):总大纲闸永远人工;细纲/章节评审绿则自动确认,
+    从总大纲确认后一路跑到 END 无中断;伏笔变更随评审建议自动生效。"""
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("自动模式", "测试")
+    cfg = {"configurable": {"thread_id": "auto-1"}}
+
+    result = graph.invoke({"story_id": story_id, "branch_id": branch,
+                           "target_chapters": 2, "initial_input": "x",
+                           "auto_mode": True}, cfg)
+    # 总大纲确认不被自动模式代签(书之根基,所有者裁决)
+    assert result["__interrupt__"][0].value["type"] == "confirm_master_outline"
+
+    # 确认总大纲后:细纲确认、两章审阅全部自动通过,直达 END
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    assert "__interrupt__" not in result or not result.get("__interrupt__")
+    assert result.get("chapters_done") == 2
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM chapters WHERE status='active'").fetchone()["c"] == 2
+    # 伏笔变更自动生效(评审 thread_changes 未经人工勾选直接落库,台账可查)
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM plot_threads").fetchone()["c"] >= 1
+
+
+def test_auto_mode_escalates_on_rewrite_exhausted(engine, monkeypatch):
+    """自动模式下重写 3 次仍未过审:中断点 B 强制回人工(rewrite_exhausted)。"""
+    monkeypatch.setitem(SCRIPTS, "review_draft_outline",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "fidelity": 5},
+                         "feedback": "不行"})
+    monkeypatch.setitem(SCRIPTS, "review_quality",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "foreshadow": 5, "style": 5},
+                         "feedback": "不行", "thread_changes": []})
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("自动耗尽", "测试")
+    cfg = {"configurable": {"thread_id": "auto-2"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x",
+                  "auto_mode": True}, cfg)                    # 总大纲闸(人工)
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)  # 细纲自动过 -> 3轮重写 -> 转人工
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "user_review_chapter"
+    assert intr["rewrite_exhausted"] is True           # 自动模式不吞掉升级信号
+
+
+def test_master_outline_regen_limit_escalates(engine, monkeypatch):
+    """总大纲回炉上限(ADR-0016 新增,与细纲/重写同口径):3 轮未过 -> 确认卡带
+    escalation 转人工,不再无限回炉。"""
+    monkeypatch.setitem(SCRIPTS, "review_master_outline",
+                        {"verdict": "revise",
+                         "scores": {"consistency": 5, "structure": 5},
+                         "feedback": "不行"})
+    graph, deps, conn = engine
+    story_id, branch = deps.repo.create_story("总纲上限", "测试")
+    cfg = {"configurable": {"thread_id": "auto-3"}}
+
+    result = graph.invoke({"story_id": story_id, "branch_id": branch,
+                           "target_chapters": 1, "initial_input": "x",
+                           "auto_mode": True}, cfg)
+    # 3 轮回炉在首次运行内完成,第一次中断即带 escalation 的总大纲确认(不再无限回炉)
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "confirm_master_outline"
+    assert intr["escalation"] and "3 轮" in intr["escalation"]
+
+
 def test_commit_finalize_dedup_and_setting_chain(tmp_path):
     """定稿落库:精确去重 + setting 推翻链(任一时点只有最新场景环境有效)。"""
     from app.memory.world import replay_world

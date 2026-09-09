@@ -41,6 +41,22 @@ from app.memory.repository import AgentContext
 
 REWRITE_LIMIT = 3   # ADR-0007 裁决 4(可配置)
 STAGE_REGEN_LIMIT = 3        # 细纲重生成上限:超过自动转用户(行业惯例:escalate to human)
+MASTER_REGEN_LIMIT = 3       # 总大纲重生成上限(ADR-0016:与细纲/重写同口径)
+
+
+def _master_escalation(state: GraphState) -> str | None:
+    """总大纲循环自动中断原因(None=无需中断)。
+
+    历史上总大纲回炉无上限(靠 recursion_limit 兜底);ADR-0016 起与
+    细纲/重写同口径:3 轮未过评审即转用户,两种模式一致。
+    """
+    verdict = state.get("outline_verdict", {}).get("verdict", "revise")
+    if verdict not in ("revise", "block"):
+        return None
+    count = state.get("master_regen_count", 1)
+    if count >= MASTER_REGEN_LIMIT:
+        return f"总大纲已重生成 {count} 轮仍未通过评审,自动转交你裁决"
+    return None
 
 
 def _stage_escalation(state: GraphState) -> str | None:
@@ -75,11 +91,14 @@ def _node(fn: Callable, deps: Deps):
 # ---------- 中断点 ----------
 
 def confirm_master_outline(state: GraphState, deps: Deps) -> dict:
+    # 总大纲确认永不由自动模式代签(所有者裁决,ADR-0016):
+    # 整本书的根基方向必须作者亲自拍板,与审校绿否无关
     review = state.get("outline_verdict", {})
     decision = interrupt({
         "type": "confirm_master_outline",
         "outline": state.get("master_outline", ""),
         "review": review,
+        "escalation": _master_escalation(state),
     })
     if decision.get("action") == "revise":
         return {"user_input": decision, "outline_confirmed": False}
@@ -107,13 +126,17 @@ def confirm_master_outline(state: GraphState, deps: Deps) -> dict:
 
 
 def confirm_stage_outline(state: GraphState, deps: Deps) -> dict:
-    decision = interrupt({
-        "type": "confirm_stage_outline",
-        "stage_outline": state.get("stage_outline", ""),
-        "review": state.get("outline_verdict", {}),
-        "regen_count": state.get("stage_regen_count", 1),
-        "escalation": _stage_escalation(state),   # 自动中断原因(非空=循环转人工)
-    })
+    escalation = _stage_escalation(state)
+    if state.get("auto_mode") and not escalation:
+        decision = {"action": "confirm"}
+    else:
+        decision = interrupt({
+            "type": "confirm_stage_outline",
+            "stage_outline": state.get("stage_outline", ""),
+            "review": state.get("outline_verdict", {}),
+            "regen_count": state.get("stage_regen_count", 1),
+            "escalation": escalation,   # 自动中断原因(非空=循环转人工)
+        })
     return {"user_input": decision,
             "chapter_no": (state.get("chapters_done", 0) + 1)}
 
@@ -121,19 +144,24 @@ def confirm_stage_outline(state: GraphState, deps: Deps) -> dict:
 def user_review_chapter(state: GraphState, deps: Deps) -> dict:
     """中断点 B:章节审阅 + 伏笔人工二次确认(ADR-0007)。
 
-    rewrite_exhausted=True 表示已达重写上限且评审仍未通过——
-    由用户裁决:带着评审意见定稿(confirm)或再改写(revise)。
+    自动模式(ADR-0016):双评审 pass 直通定稿,伏笔变更随评审建议自动生效
+    (Codex 台账可事后查阅);rewrite_exhausted(重写 3 次仍未过)强制回人工。
     """
-    decision = interrupt({
-        "type": "user_review_chapter",
-        "chapter_no": state.get("chapter_no"),
-        "draft": state.get("draft", ""),
-        "outline_review": state.get("outline_review", {}),
-        "quality_review": state.get("quality_review", {}),
-        "thread_changes": state.get("quality_review", {}).get("thread_changes", []),
-        "conflicts": state.get("fact_changes", {}).get("conflicts", []),
-        "rewrite_exhausted": state.get("rewrite_exhausted", False),
-    })
+    exhausted = bool(state.get("rewrite_exhausted"))
+    if state.get("auto_mode") and not exhausted:
+        decision = {"action": "confirm",
+                    "threads": state.get("quality_review", {}).get("thread_changes", [])}
+    else:
+        decision = interrupt({
+            "type": "user_review_chapter",
+            "chapter_no": state.get("chapter_no"),
+            "draft": state.get("draft", ""),
+            "outline_review": state.get("outline_review", {}),
+            "quality_review": state.get("quality_review", {}),
+            "thread_changes": state.get("quality_review", {}).get("thread_changes", []),
+            "conflicts": state.get("fact_changes", {}).get("conflicts", []),
+            "rewrite_exhausted": exhausted,
+        })
     update = {"user_input": decision,
               "thread_changes": decision.get("threads", [])}   # 人工确认后的伏笔变更
     if decision.get("action") == "revise":
@@ -272,7 +300,10 @@ def route_after_stage_agent_review(state: GraphState) -> str:
 
 
 def route_after_master_review(state: GraphState) -> str:
-    """总大纲评审通过才进入用户确认;不通过回主控重生成。"""
+    """总大纲评审通过才进入用户确认;不通过回主控重生成——
+    但 3 轮上限(ADR-0016)后不再回炉,带着评审意见转用户裁决。"""
+    if _master_escalation(state):
+        return "confirm_master"
     verdict = state.get("outline_verdict", {}).get("verdict", "revise")
     if verdict in ("revise", "block"):
         return "regen_master"
