@@ -230,6 +230,11 @@ class Deps:
                 return line
         return stage_outline[:300]
 
+    # 虚词边界(ADR-0017 修正):以这些字结尾/开头的短语是语法黏连而非口头禅
+    # (如"林默没有""苏清歌说""审计部的")——写手无法稳定避开,禁了必成死循环
+    _BAN_END_STOP = set("的了说是着在没吗呢吧被把和与或及")
+    _BAN_START_STOP = set("的了不没也都就很被他她它")
+
     def recent_phrase_blacklist(self, story_id: str, chapter_no: int, *,
                                 window: int = 5, min_freq: int = 3,
                                 min_chapters: int = 2, limit: int = 12) -> list[str]:
@@ -238,6 +243,9 @@ class Deps:
         题材无关、随书自适应(替代硬编码句式黑名单):4-gram 计数,仅统计
         跨 ≥min_chapters 章且总频次 ≥min_freq 的纯中文片段(跳过标点/数字/
         英文——数值滥用由写作规则约束,不在此列);相邻高频 gram 合并为最长短语。
+        虚词边界过滤:以虚词开头/结尾的候选(语法黏连模式)不入清单——
+        "人名+没有/说""名词+的"是自然汉语,禁用它们等于猎杀语法,写手
+        无法稳定避开,会造成评审-重写死循环(ch12 实证)。
         """
         with self.run_lock:
             rows = self.conn.execute(
@@ -281,6 +289,30 @@ class Deps:
                         i = j          # 从首个非高频 gram 处继续扫描
                     else:
                         i += 1
+        # 虚词边界修剪(语法黏连不入清单):掐掉首尾虚词(含"没有/的话"等双字尾缀),
+        # 修剪后不足 4 字(只剩人名/名词骨架)则整条丢弃——"林默没有""苏清歌说"
+        # "审计部的"这类模式写手无法稳定避开,禁了必成评审-重写死循环(ch12 实证)
+        _END_TOKENS = ("没有", "的话", "似的", "一样", "一般")
+        trimmed: dict[str, int] = {}
+        for p, c in phrases.items():
+            q = p
+            changed = True
+            while changed and q:
+                changed = False
+                for t in _END_TOKENS:
+                    if q.endswith(t):
+                        q = q[:-len(t)]
+                        changed = True
+                if q and q[-1] in self._BAN_END_STOP:
+                    q = q[:-1]
+                    changed = True
+                if q and q[0] in self._BAN_START_STOP:
+                    q = q[1:]
+                    changed = True
+            if len(q) >= 4:
+                trimmed[q] = trimmed.get(q, 0) + c
+        phrases = trimmed
+
         # 去包含:短语被更长高频短语覆盖时丢弃
         ordered = sorted(phrases, key=lambda p: (-len(p), p))
         kept: list[str] = []

@@ -91,6 +91,24 @@ def test_recent_phrase_blacklist_needs_cross_chapter(deps):
     assert not any("重复的短语" in p for p in ban)     # 未跨章 -> 不算口头禅
 
 
+def test_recent_phrase_blacklist_drops_grammar_patterns(deps):
+    """虚词边界修剪(ch12 死循环回归):'人名+没有/说''名词+的'是语法黏连,
+    变体分散后任何单一整句都不该上榜;真口头禅仍要命中。"""
+    d, conn = deps
+    story_id, branch = d.repo.create_story("语法过滤", "测试")
+    variants = ["林默没有犹豫。", "林默没有退。", "林默没有接话。", "林默没有点头。"]
+    says = ["苏清歌说这事不能算了。", "苏清歌说那不一样。", "苏清歌说他想多了。", "苏清歌说不好。"]
+    for no in range(1, 5):
+        _ins_chapter(conn, story_id, branch, no,
+                     variants[no - 1] + says[no - 1]
+                     + "他的大脑飞速运转起来,想出了办法。")
+    ban = d.recent_phrase_blacklist(story_id, 6)
+    assert not any("林默没有" in p for p in ban)        # 人名+否定变体:语法黏连
+    assert not any("苏清歌说" in p for p in ban)         # 人名+说:对话标签语法
+    assert not any(p.endswith("的") for p in ban)        # 名词+的:所有格语法
+    assert any("大脑飞速运转" in p for p in ban)         # 真口头禅(跨章一致)仍然命中
+
+
 def test_recent_phrase_blacklist_empty_history(deps):
     d, conn = deps
     story_id, _ = d.repo.create_story("新书", "测试")
