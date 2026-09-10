@@ -61,11 +61,16 @@ class UpdateCharactersNode(BaseAgent):
         fact_lines = "\n".join(f"- {f['content']}" for f in changes.get("facts", []))
         belief_lines = "\n".join(f"- {b['content']}" for b in changes.get("beliefs", []))
         if not fact_lines and not belief_lines:
-            return {"character_changes": []}
+            return {"character_changes": [], "character_intents": []}
         result = self.ask_json(
-            "你是角色状态管理员。基于本章新事实更新受影响角色的状态/关系/目标,严格按 JSON 输出:"
-            '{"updates":[{"name":"角色名","profile_append":"新增状态描述(将追加到角色卡)"}]}。'
-            "只列有变化的角色。",
+            "你是角色状态与意图管理员。基于本章事实更新受影响角色,并登记其意图,严格按 JSON 输出:\n"
+            '{"updates":[{"name":"角色名","profile_append":"状态/关系变化(追加到角色卡)"}],\n'
+            '"intents":[{"name":"角色名","goal":"该角色接下来最想达成什么(出于其自身利益,'
+            '与主角的目标无关)","knows":"该角色目前确知的一条关键信息",'
+            '"doesnt_know":"该角色不知道的一条关键信息",'
+            '"self_interest":"该角色下一步会为自己做的一件具体的事(可以与主角利益冲突)"}]}\n'
+            "规则:intents 覆盖本章在场的所有重要角色(含反派,若有戏份);"
+            "角色按自身立场与所知行动,不是为主角的剧情服务。",
             f"[本章新事实]\n{fact_lines}\n\n[本章认知变化]\n{belief_lines}",
             stage="update_characters",
             story_id=state.get("story_id", ""),
@@ -73,4 +78,10 @@ class UpdateCharactersNode(BaseAgent):
         name_to_id = deps.character_name_map(state)
         for u in result.get("updates", []):
             u["character_id"] = name_to_id.get(u.get("name"), "")
-        return {"character_changes": result.get("updates", [])}
+        intents = []
+        for i in result.get("intents", []):
+            i["character_id"] = name_to_id.get(i.get("name"), "")
+            if i.get("name"):
+                intents.append(i)
+        return {"character_changes": result.get("updates", []),
+                "character_intents": intents}

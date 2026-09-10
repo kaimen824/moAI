@@ -17,6 +17,7 @@ class GraphState(TypedDict, total=False):
     # ---- 共创(ADR-0011)----
     initial_input: str            # 用户的世界观构想(共创起点)
     world_settings: str           # 访谈汇总产出
+    capability_contract: str      # 核心能力契约(ADR-0017:能力硬边界,随书共创生成)
     character_drafts: list[dict]  # 角色管理产出的角色卡草案
     entity_drafts: dict           # 实体种子(ADR-0015:entities/character_aliases/links,确认总大纲时落库)
     master_outline: str           # 总大纲(含卷结构)
@@ -51,6 +52,7 @@ class GraphState(TypedDict, total=False):
     chapter_summary: str
     stage_summary: str            # 阶段末章时的聚合摘要(layer='stage')
     entity_content_updates: list[dict]  # 阶段末实体条目滚动(ADR-0015 裁决②)
+    character_intents: list[dict]  # 在场角色意图(ADR-0017:goal/knows/doesnt_know/self_interest)
     chapter_id: str
 
     # ---- 中断恢复的用户输入 ----

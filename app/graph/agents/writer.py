@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from app.core.config import AgentRole
 from app.core.llm.base import ChatMessage
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
@@ -10,6 +12,14 @@ _TYPE_ZH = {
     "character": "角色", "faction": "势力", "location": "地点",
     "item": "物品", "technique": "功法", "concept": "概念",
 }
+
+
+def strip_markdown_title(text: str) -> str:
+    """剥离开头残留的 markdown 标题行(模型偶发无视'不要标题'指令,ADR-0017)。"""
+    lines = text.lstrip().splitlines()
+    if lines and re.match(r"^#{1,6}\s*\S", lines[0]):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
 
 
 def render_context(state: dict, *, max_facts: int = 40) -> str:
@@ -23,6 +33,16 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
     if bundle.get("user_directives"):
         lines = "\n".join(f"- {d}" for d in bundle["user_directives"])
         parts.append(f"[用户指示(最高优先级,必须遵从)]\n{lines}")
+    if state.get("capability_contract"):
+        parts.append(f"[核心能力契约(主角能力的硬边界,不得越权)]\n{state['capability_contract']}")
+    if bundle.get("character_intents"):
+        ints = "\n".join(
+            f"- {i['name']}|目标:{i.get('goal', '')}|确知:{i.get('knows', '')}"
+            f"|不知:{i.get('doesnt_know', '')}|将为自己做:{i.get('self_interest', '')}"
+            for i in bundle["character_intents"][:8]
+        )
+        parts.append(
+            "[在场角色意图(每个角色按自身利益行动;'不知'中的信息该角色言行不得引用)]\n" + ints)
     if state.get("master_outline"):
         parts.append(f"[全书大纲]\n{state['master_outline']}")
     if state.get("chapter_brief"):
@@ -59,9 +79,18 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
             for e in bundle["expanded_entities"][:8]
         )
         parts.append(f"[相关设定(在场角色的关联实体,一跳邻居;照应设定,不得矛盾)]\n{ents}")
-    if bundle.get("active_threads"):
-        th = "\n".join(f"- {t['description']}" for t in bundle["active_threads"])
-        parts.append(f"[活跃伏笔]\n{th}")
+    threads = bundle.get("active_threads") or []
+    adv = [t for t in threads if not t.get("_suspend")]
+    susp = [t for t in threads if t.get("_suspend")]
+    if adv:
+        th = "\n".join(f"- {t['description']}" for t in adv)
+        parts.append(f"[活跃伏笔(可推进;每章至多推进一条)]\n{th}")
+    if susp:
+        th = "\n".join(f"- {t['description']}" for t in susp)
+        parts.append(f"[悬置伏笔(只许加深神秘感,严禁解释或回收)]\n{th}")
+    if bundle.get("style_ban"):
+        sb = "\n".join(f"- {p}" for p in bundle["style_ban"])
+        parts.append(f"[禁用表达(近章已高频复现,本章一律不用)]\n{sb}")
     if bundle.get("carryover"):
         parts.append(f"[上期衔接]\n{bundle['carryover']}")
     feedback = state.get("quality_review", {}).get("feedback") or ""
@@ -89,7 +118,20 @@ class WriterNode(BaseAgent):
             "剧情重演或换措辞复写——本章必须推进新事件。\n"
             "2. 开场必须衔接[上期衔接]给出的上一章结尾状态(场景/时间/人物位置),"
             "时间线只能向前;开场环境描写不得与上一章重复。\n"
-            "3. 自然照应活跃伏笔;文风连贯。直接输出正文,不要标题和说明。"
+            "3. 伏笔纪律:[活跃伏笔]每章至多推进一条;[悬置伏笔]只许加深神秘感,"
+            "严禁解释、回收或让角色讨论出真相。\n"
+            "4. 能力边界:若给出[核心能力契约],主角能力严格遵守契约——能力只能提供"
+            "线索、现象或部分信息,严禁直接给出'谁做的/为什么/该怎么办'级别的结论;"
+            "关键突破必须来自观察、推理、试错或他人的言行,而非能力扫描。\n"
+            "5. 人物自主:每个在场角色按[在场角色意图]中其自身目标和利益行动,"
+            "其'不知'清单中的信息该角色不得引用;每章至少一个角色做一件符合自身"
+            "利益但不利于主角的事。\n"
+            "6. 反AI痕迹:严禁信息倾泻(连续三行以上的设定罗列/数值播报);解释性对白"
+            "压到最低(角色不为读者上课);伪精确数值(百分比/倒计时/小数)仅当设定"
+            "已建立且必要时使用;[禁用表达]清单中的短语一律不得出现。\n"
+            "7. 本章结束时必须留有未解决的张力(未答之问/新麻烦/误判的后果);"
+            "若[本章要点]标明受挫,必须落实失败及其延续后果,不得当场翻盘。"
+            "直接输出正文,不要标题和说明。"
         )
         user = render_context(state)
 
@@ -121,4 +163,5 @@ class WriterNode(BaseAgent):
             raise RuntimeError(
                 f"写作模型连续两次返回空内容(第{state.get('chapter_no')}章"
                 f"第{state.get('rewrite_count', 0) + 1}稿),已中止——请重试或换模型")
+        draft = strip_markdown_title(draft)   # 剥离残留的 markdown 标题行
         return {"draft": draft}

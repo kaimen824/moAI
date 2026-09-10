@@ -230,6 +230,66 @@ class Deps:
                 return line
         return stage_outline[:300]
 
+    def recent_phrase_blacklist(self, story_id: str, chapter_no: int, *,
+                                window: int = 5, min_freq: int = 3,
+                                min_chapters: int = 2, limit: int = 12) -> list[str]:
+        """动态句式自检(ADR-0017):近 K 章高频复现的中文短语 -> 本章禁用清单。
+
+        题材无关、随书自适应(替代硬编码句式黑名单):4-gram 计数,仅统计
+        跨 ≥min_chapters 章且总频次 ≥min_freq 的纯中文片段(跳过标点/数字/
+        英文——数值滥用由写作规则约束,不在此列);相邻高频 gram 合并为最长短语。
+        """
+        with self.run_lock:
+            rows = self.conn.execute(
+                "SELECT content FROM chapters"
+                " WHERE story_id=? AND status='active' AND chapter_no<?"
+                " ORDER BY chapter_no DESC LIMIT ?",
+                (story_id, chapter_no, window)).fetchall()
+        if len(rows) < min_chapters:
+            return []
+        texts = [(r["content"] or "") for r in rows]
+        gram_chapters: dict[str, set[int]] = {}
+        for ci, text in enumerate(texts):
+            for run in re.findall(r"[一-鿿]+", text):
+                for i in range(len(run) - 3):
+                    gram_chapters.setdefault(run[i:i + 4], set()).add(ci)
+        # 频次阈值:出现于足够多章(跨章复现才是口头禅;单章内的重复多为有意排比)
+        frequent = {g for g, chs in gram_chapters.items() if len(chs) >= min_chapters}
+        if not frequent:
+            return []
+        counts: dict[str, int] = {}
+        for text in texts:
+            for run in re.findall(r"[一-鿿]+", text):
+                for i in range(len(run) - 3):
+                    g = run[i:i + 4]
+                    if g in frequent:
+                        counts[g] = counts.get(g, 0) + 1
+        hot = {g for g, c in counts.items() if c >= min_freq}
+        if not hot:
+            return []
+        # 合并为最长短语:连续段内所有 4-gram 均高频(末 gram 尾部 3 字计入跨度)
+        phrases: dict[str, int] = {}
+        for text in texts:
+            for run in re.findall(r"[一-鿿]+", text):
+                i = 0
+                while i + 4 <= len(run):
+                    j = i
+                    while j + 4 <= len(run) and run[j:j + 4] in hot:
+                        j += 1
+                    if j > i:
+                        phrases[run[i:j + 3]] = phrases.get(run[i:j + 3], 0) + 1
+                        i = j          # 从首个非高频 gram 处继续扫描
+                    else:
+                        i += 1
+        # 去包含:短语被更长高频短语覆盖时丢弃
+        ordered = sorted(phrases, key=lambda p: (-len(p), p))
+        kept: list[str] = []
+        for p in ordered:
+            if not any(p in q for q in kept):
+                kept.append(p)
+        kept.sort(key=lambda p: -phrases[p])
+        return kept[:limit]
+
     def character_name_map(self, state: dict) -> dict[str, str]:
         """名字 -> 角色 id(ADR-0015 升级:并入实体别名表,修别称盲区)。
 

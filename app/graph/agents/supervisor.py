@@ -8,7 +8,7 @@ from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
 @register_agent
 class CoauthorNode(BaseAgent):
-    """共创访谈汇总:用户构想 -> 世界观设定(多轮对话由 API 层聚合,节点做收敛)。"""
+    """共创访谈汇总:用户构想 -> 世界观设定 + 核心能力契约(ADR-0017)。"""
 
     name = "supervisor"
     role = AgentRole.SUPERVISOR
@@ -19,13 +19,29 @@ class CoauthorNode(BaseAgent):
                 "你是小说世界观共创策划。若输入只是题材标签(如'龙傲天''无限流'),"
                 "按该题材的经典范式自行展开设定;若输入较完整则收敛。产出结构化世界观设定,"
                 "包含:基调、核心冲突、力量/社会体系、3-6 个主要角色构想(名字+一句话)。"
+                "若设定包含主角的核心能力(金手指),只描述其现象与来源,不要在此展开其全能用法。"
                 "直接输出设定文本,不要客套。"
             ),
             user=state.get("initial_input", "用户未提供,请生成一个东方奇幻世界观"),
             stage="coauthor",
             story_id=state.get("story_id", ""),
         )
-        return {"world_settings": settings}
+        contract = self.ask_json(
+            "你是能力系统设计师。为主角的核心能力(金手指;若世界观没有明确能力,"
+            "则以主角最突出的专长为对象)制定硬边界契约,严格按 JSON 输出:\n"
+            '{"capability_contract":"能做什么:...\\n'
+            "不能做什么:必须列出至少两类无法直接获得的信息(如:他人真实动机/"
+            "幕后主使身份/现成解决方案/未来走向),能力只能给出线索与现象\\n"
+            "使用成本:每次使用付出的代价或风险\\n"
+            '失效条件:在什么情况下完全不可用"}\n'
+            "契约目标:把'观察和收集线索'交给能力,把'得出结论、解决问题'留给人物的"
+            "推理、试错与协作。契约是该书的硬约束,后续所有章节遵守。",
+            settings,
+            stage="capability_contract",
+            story_id=state.get("story_id", ""),
+        )
+        return {"world_settings": settings,
+                "capability_contract": contract.get("capability_contract", "")}
 
 
 @register_agent
@@ -54,6 +70,8 @@ class GenMasterOutline(BaseAgent):
             ),
             user=(state.get("world_settings", "")
                   + f"\n\n[近期写作目标]本次先写约 {n} 章,大纲前两卷需覆盖到该进度之后。"
+                  + (f"\n\n[核心能力契约(规划不得让能力越权解题)]\n{state['capability_contract']}"
+                     if state.get("capability_contract") else "")
                   + ("\n\n[用户对上一版大纲的修改意见] " + state["user_input"]["feedback"]
                      if isinstance(state.get("user_input"), dict)
                      and state["user_input"].get("action") == "revise" else "")),
@@ -81,14 +99,22 @@ class StageOutlineNode(BaseAgent):
         brief = deps.recent_carryover(state)   # 上期衔接状态(短期记忆)
         outline = self.ask_text(
             system=(
-                "你是剧情策划。基于总大纲中尚未完成的剧情,产出下一阶段的分章细纲:\n"
-                "每章一行:章号|主要事件|在场角色|本章要点。阶段覆盖 3-6 章,"
+                "你是剧情策划。基于总大纲中尚未完成的剧情,产出下一阶段的张力计划"
+                "(不是任务清单——章节推进张力,不要求每章解决一个问题):\n"
+                "[阶段目标]一句话:本阶段结束时的局面变化。\n"
+                "[各方意图]\n- 主角方:想要什么、可用手段。\n"
+                "- 对手方:独立目标与手段(对手为自己行动,不是为主角服务);"
+                "对手不为主角所知的底牌只写在:[各方意图]里,严禁进入分章要点。\n"
+                "[强制受挫]第N章:主角的一次误判或失败,及其会延续到后续章节的后果"
+                "(N 必须在本阶段章号范围内;不得设计当场翻盘)。\n"
+                "[悬念锁]本阶段禁止解释的谜团(只可加深,不可回收)。\n"
+                "[分章计划]每章一行:章号|本章张力推进(信息不完整、允许小挫败)"
+                "|在场角色。阶段覆盖 3-6 章,"
                 f"章号从第 {done + 1} 章起连续编号。\n"
-                "铁律:[已完成剧情回顾]中的事件已经写过——细纲必须从回顾末尾的"
+                "铁律:[已完成剧情回顾]中的事件已经写过——计划必须从回顾末尾的"
                 "剧情状态继续向前推进,严禁重排、复写或换措辞重演已完成事件;"
                 "若总大纲的某卷事件已部分完成,只规划其未完成部分。\n"
-                "每章要点须有新的剧情推进(新事件/新信息/新冲突),不得整章停留在"
-                "已完成状态。总长不超过 600 字。"
+                "每章要有新的剧情推进,但推进不等于解决。总长不超过 600 字。"
             ),
             user=f"[总大纲]\n{state.get('master_outline','')}\n\n"
                  f"[已完成章数]{done}\n\n[已完成剧情回顾]\n{recap}\n\n"
@@ -119,7 +145,10 @@ class ChapterSliceNode(BaseAgent):
                 "把给定章节细纲行扩展为 3-5 句本章写作要点,包含开场衔接提示"
                 "(以上一章结尾的状态、场景、时间为起点继续)。\n"
                 "注意:细纲行之后已经写完的章节不得出现在本章要点里;"
-                "本章要点必须是尚未发生的新剧情。直接输出要点。"
+                "本章要点必须是尚未发生的新剧情。\n"
+                "要点必须信息不完整:主角在本章结束时仍缺少至少一项关键信息,"
+                "不得把本章涉及的谜团全部解释完;若细纲或阶段计划标记了本章受挫,"
+                "要点必须落实失败/误判及其延续后果,不得设计当场翻盘。直接输出要点。"
             ),
             user=f"[本章细纲行]{slice_line}\n[章号]第{no}章\n[上期衔接]{brief}",
             stage="chapter_slice",

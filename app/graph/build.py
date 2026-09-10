@@ -191,6 +191,17 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "vector_hits": result.vector_hits,     # 长尾召回(POV 同口径过滤)
     }
     bundle["carryover"] = deps.recent_carryover(state)
+    # ADR-0017 信息差与自适应痕迹治理
+    chapter_no = state["chapter_no"]
+    for t in result.active_threads:
+        planted = t.get("planted_chapter") or 0
+        t["_suspend"] = bool(planted and 0 < chapter_no - planted < 3)
+    bundle["style_ban"] = deps.recent_phrase_blacklist(state["story_id"], chapter_no)
+    present = set(present_ids)
+    intents = [i for i in state.get("character_intents", [])
+               if i.get("character_id") in present]
+    if intents:
+        bundle["character_intents"] = intents
     # 用户指令通道:消费挂起的指示,注入本章上下文(最高优先级)
     directives = deps.take_pending_directives(state["story_id"])
     if directives:
@@ -202,6 +213,8 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "threads": len(result.active_threads),
         "expanded_entities": len(result.expanded_entities),
         "user_directives": len(directives),
+        "style_ban": len(bundle["style_ban"]),
+        "intents": len(intents),
     }
     return {"context_bundle": bundle, "present_characters": present_ids,
             "context_stats": stats}

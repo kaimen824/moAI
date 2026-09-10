@@ -17,6 +17,11 @@ R = LLMResponse
 
 SCRIPTS: dict[str, str | dict] = {
     "coauthor": "世界观:架空东方奇幻,核心冲突:旧神复苏",
+    "capability_contract": {"capability_contract":
+                            "能做什么:解析之眼可观察规则现象\n"
+                            "不能做什么:他人真实动机;幕后主使身份;现成解决方案\n"
+                            "使用成本:每次使用后精神疲惫一小时\n"
+                            "失效条件:神力浓度过高的区域完全失效"},
     "init_characters": {"characters": [
         {"name": "沈砚", "profile": "主角;驽钝但坚韧"},
         {"name": "白芷", "profile": "师妹;知晓秘密"}]},
