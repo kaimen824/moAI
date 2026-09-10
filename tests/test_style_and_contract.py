@@ -97,6 +97,32 @@ def test_recent_phrase_blacklist_empty_history(deps):
     assert d.recent_phrase_blacklist(story_id, 1) == []
 
 
+# ---------- 精校路由判定(ADR-0018 修订:style|local → 精校)----------
+
+def test_polishable_routing():
+    from app.graph.build import _polishable
+
+    def st(o, q):
+        return {"outline_review": o, "quality_review": q}
+
+    REV = {"verdict": "revise"}
+    # 双 style / style+local / 双 local → 精校
+    assert _polishable(st({**REV, "fix_scope": "style"}, {**REV, "fix_scope": "style"}))
+    assert _polishable(st({**REV, "fix_scope": "local"}, {**REV, "fix_scope": "style"}))
+    assert _polishable(st({**REV, "fix_scope": "local"}, {**REV, "fix_scope": "local"}))
+    # 一 pass 一 revise(style) → 精校(pass 方不需要 fix_scope)
+    assert _polishable(st({"verdict": "pass"}, {**REV, "fix_scope": "local"}))
+    # 任一 content(结构性/大范围偏离)→ 重写
+    assert not _polishable(st({**REV, "fix_scope": "local"}, {**REV, "fix_scope": "content"}))
+    # 字段缺失(旧评审输出)→ 安全侧重写
+    assert not _polishable(st(REV, {**REV, "fix_scope": "style"}))
+    # block → 重写
+    assert not _polishable(st({"verdict": "block", "fix_scope": "style"},
+                              {"verdict": "pass"}))
+    # 双 pass(无 revise)→ 不进精校路由
+    assert not _polishable(st({"verdict": "pass"}, {"verdict": "pass"}))
+
+
 # ---------- 新细纲格式仍可解析 ----------
 
 def test_parse_stage_range_with_tension_plan(deps):

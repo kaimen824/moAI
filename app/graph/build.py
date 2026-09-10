@@ -21,6 +21,7 @@ from langgraph.types import interrupt
 from app.graph.agents.character_manager import InitCharactersNode, UpdateCharactersNode
 from app.graph.agents.entity_resolver import EntityResolveNode
 from app.graph.agents.event_extractor import EventExtractNode
+from app.graph.agents.polisher import PolishDraftNode
 from app.graph.agents.outline_reviewer import (
     ReviewDraftOutline,
     ReviewMasterOutline,
@@ -239,10 +240,24 @@ def merge_reviews(state: GraphState, deps: Deps) -> dict:
             "rewrite_count": count + 1}
 
 
+def _polishable(state: GraphState) -> bool:
+    """精校判定(ADR-0018,修订):分类轴是"局部可指令化 vs 结构性"——
+    所有给出 revise 的评审均标注 style(纯文风)或 local(带精确处方的局部
+    事实修正)→ 精校;block、任一 content(结构性)、字段缺失 → 全量重写。
+    """
+    for r in (state.get("outline_review", {}), state.get("quality_review", {})):
+        if r.get("verdict", "revise") in ("revise", "block"):
+            if r.get("verdict") == "block" or r.get("fix_scope") not in ("style", "local"):
+                return False
+    return any(r.get("verdict") == "revise"
+               for r in (state.get("outline_review", {}),
+                         state.get("quality_review", {})))
+
+
 def route_after_merge(state: GraphState) -> str:
     v = state.get("merged_verdict", "revise")
     if v == "revise":
-        return "rewrite"
+        return "polish" if _polishable(state) else "rewrite"
     return "user_review"       # pass / needs_user 均交用户
 
 
@@ -344,6 +359,8 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_node("chapter_slice", _node(ChapterSliceNode(deps.llm), deps))
     g.add_node("build_context", _node(build_context, deps))
     g.add_node("write_draft", _node(WriterNode(deps.llm), deps))
+    # 文风返工通道(ADR-0018):双评审均 style/local → 精校既有稿,便宜模型不全量重写
+    g.add_node("polish_draft", _node(PolishDraftNode(deps.llm), deps))
     g.add_node("review_draft_outline", _node(ReviewDraftOutline(deps.llm), deps))
     g.add_node("review_quality", _node(QualityReviewNode(deps.llm), deps))
     g.add_node("merge_reviews", _node(merge_reviews, deps))
@@ -392,14 +409,17 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_edge("chapter_slice", "build_context")
     g.add_edge("build_context", "write_draft")
 
-    # 双评审 fan-out / fan-in(并行)
+    # 双评审 fan-out / fan-in(并行);返工分两路:精校 / 全量重写(ADR-0018)
     g.add_edge("write_draft", "review_draft_outline")
     g.add_edge("write_draft", "review_quality")
+    g.add_edge("polish_draft", "review_draft_outline")
+    g.add_edge("polish_draft", "review_quality")
     g.add_edge("review_draft_outline", "merge_reviews")
     g.add_edge("review_quality", "merge_reviews")
     g.add_conditional_edges(
         "merge_reviews", route_after_merge,
-        {"rewrite": "write_draft", "user_review": "user_review_chapter"},
+        {"polish": "polish_draft", "rewrite": "write_draft",
+         "user_review": "user_review_chapter"},
     )
     g.add_conditional_edges(
         "user_review_chapter", route_after_review,

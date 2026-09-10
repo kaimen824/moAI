@@ -12,8 +12,15 @@ from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
 _SYSTEM = (
     "你是大纲一致性评审员(独立评审,不参与创作)。严格按 JSON 输出:"
-    '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"structure":0-10},"feedback":"评审意见"}。\n'
+    '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"structure":0-10},'
+    '"fix_scope":"style|local|content","feedback":"评审意见"}。\n'
     "consistency 评与基准的吻合度,structure 评结构完备度。低于 7 分给 revise,严重矛盾给 block。\n"
+    "fix_scope(成稿评审必填;大纲类评审填 content):revise 时标注问题性质——\n"
+    "- style:纯文风问题(措辞/节奏/冗余/复读表达/措辞层面的倾泻);\n"
+    "- local:局部事实修正,且必须在'必须修改'里给出精确处方(将X改为Y:"
+    "数值衔接、称谓统一、单句事实更正等),不含任何结构调整;\n"
+    "- content:大范围结构性偏离(增删场景/改因果/改人物行动逻辑/能力越权/"
+    "信息边界——未必是偏离大纲)。\n"
     "反AI检查(命中任一,consistency 至少扣 2 分并在 feedback 逐条指出):\n"
     "- 能力越权:关键结论(谁做的/为什么/怎么办)由能力、系统或直觉直接给出,"
     "而非人物观察推理得出;\n"

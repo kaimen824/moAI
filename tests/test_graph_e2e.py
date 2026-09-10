@@ -43,6 +43,7 @@ SCRIPTS: dict[str, str | dict] = {
                              "scores": {"consistency": 9, "structure": 9}, "feedback": "ok"},
     "chapter_slice": "本章要点:暴雨夜的异象与古碑初现,沈砚与白芷同行。",
     "draft": "沈砚在暴雨中前行,身旁的白芷提着一盏昏黄的灯……(正文约一千五百字)",
+    "polish": "沈砚在暴雨中收束了思绪。白芷提灯走在他的左侧,雨幕把两人的影子叠在一处。(精校后的正文)",
     "review_draft_outline": {"verdict": "pass",
                              "scores": {"consistency": 9, "fidelity": 9}, "feedback": "ok"},
     "review_quality": {"verdict": "pass",
@@ -471,6 +472,101 @@ def test_master_outline_regen_limit_escalates(engine, monkeypatch):
     intr = result["__interrupt__"][0].value
     assert intr["type"] == "confirm_master_outline"
     assert intr["escalation"] and "3 轮" in intr["escalation"]
+
+
+
+def test_polish_channel_for_style_only_revision(tmp_path):
+    """ADR-0018:双评审均 revise+fix_scope=style -> 走精校(便宜模型)而非全量重写;
+    精校产物回双评审,复检通过后正常定稿。"""
+    import json as _json
+    calls = {"rdo": 0, "rq": 0}
+
+    def dynamic(stage: str):
+        if stage == "review_draft_outline":
+            calls["rdo"] += 1
+            revise = calls["rdo"] == 1
+            return R(content=_json.dumps({
+                "verdict": "revise" if revise else "pass",
+                "scores": {"consistency": 8, "fidelity": 6 if revise else 8},
+                "fix_scope": "style", "feedback": "复读表达过多"}, ensure_ascii=False), model="fake")
+        if stage == "review_quality":
+            calls["rq"] += 1
+            revise = calls["rq"] == 1
+            return R(content=_json.dumps({
+                "verdict": "revise" if revise else "pass",
+                "scores": {"consistency": 8, "foreshadow": 8, "style": 5 if revise else 8},
+                "fix_scope": "style", "feedback": "口头禅复现", "thread_changes": []},
+                ensure_ascii=False), model="fake")
+        val = SCRIPTS.get(stage)
+        if val is None:
+            return None
+        return val if isinstance(val, R) else R(
+            content=val if isinstance(val, str) else _json.dumps(val, ensure_ascii=False),
+            model="fake")
+
+    facade = LLMFacade(response_override=dynamic)
+    deps, conn = build_engine(tmp_path / "polish.db", llm=facade)
+    graph = build_graph(deps, checkpointer=deps.checkpointer)
+    story_id, branch = deps.repo.create_story("精校通道", "测试")
+    cfg = {"configurable": {"thread_id": "polish-1"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x"}, cfg)   # 中断 0
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)          # 中断 A
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)  # 写作->revise(style)->精校->复检 pass->中断 B
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "user_review_chapter"
+
+    stages = [r["stage"] for r in conn.execute(
+        "SELECT stage FROM agent_traces ORDER BY created_at").fetchall()]
+    assert stages.count("polish") == 1          # 文风返工走了精校
+    assert stages.count("draft") == 1           # 没有全量重写
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM chapters WHERE status='active'").fetchone()["c"] == 1
+
+
+def test_polish_shared_budget_exhaustion(tmp_path):
+    """ADR-0018:精校与重写共享 rewrite_count——纯文风问题跑满 3 轮仍未过,
+    照旧 needs_user 转人工(不因换了便宜通道而无限精校)。"""
+    import json as _json
+    STYLE_REVISE = {"verdict": "revise", "fix_scope": "style",
+                    "scores": {"consistency": 8, "foreshadow": 8, "style": 5},
+                    "feedback": "复读表达", "thread_changes": []}
+    FIDELITY_REVISE = {"verdict": "revise", "fix_scope": "style",
+                       "scores": {"consistency": 8, "fidelity": 6},
+                       "feedback": "句式复现"}
+
+    def dynamic(stage: str):
+        if stage == "review_quality":
+            return R(content=_json.dumps(STYLE_REVISE, ensure_ascii=False), model="fake")
+        if stage == "review_draft_outline":
+            return R(content=_json.dumps(FIDELITY_REVISE, ensure_ascii=False), model="fake")
+        val = SCRIPTS.get(stage)
+        if val is None:
+            return None
+        return val if isinstance(val, R) else R(
+            content=val if isinstance(val, str) else _json.dumps(val, ensure_ascii=False),
+            model="fake")
+
+    facade = LLMFacade(response_override=dynamic)
+    deps, conn = build_engine(tmp_path / "polish-exhaust.db", llm=facade)
+    graph = build_graph(deps, checkpointer=deps.checkpointer)
+    story_id, branch = deps.repo.create_story("精校耗尽", "测试")
+    cfg = {"configurable": {"thread_id": "polish-2"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 1, "initial_input": "x"}, cfg)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "user_review_chapter"
+    assert intr["rewrite_exhausted"] is True          # 共享预算:精校 3 轮后转人工
+
+    stages = [r["stage"] for r in conn.execute(
+        "SELECT stage FROM agent_traces ORDER BY created_at").fetchall()]
+    assert stages.count("polish") == 2                # 首稿+3轮返工:精校占后两轮
+    assert stages.count("draft") == 1                 # 全量重写始终只有一次
 
 
 def test_commit_finalize_dedup_and_setting_chain(tmp_path):

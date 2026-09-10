@@ -8,10 +8,17 @@ from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 _SYSTEM = (
     "你是小说质量审校员。严格按 JSON 输出:"
     '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"foreshadow":0-10,"style":0-10},'
+    '"fix_scope":"style|local|content",'
     '"feedback":"具体修改意见",'
     '"thread_changes":[{"description":"伏笔描述","action":"plant|advance|resolve|drop"}]}。'
     "thread_changes 列出本章正文中 埋设(plant)/推进(advance)/回收(resolve)/放弃(drop) 的伏笔;"
     "无伏笔变更时给空数组。任一维度低于 7 分给 revise。\n"
+    "fix_scope:revise 时标注问题性质——\n"
+    "- style:纯文风问题(措辞/节奏/冗余/复读表达/措辞层面的倾泻);\n"
+    "- local:局部事实修正,且必须在'必须修改'里给出精确处方(将X改为Y:"
+    "数值衔接、称谓统一、单句事实更正等),不含任何结构调整;\n"
+    "- content:大范围结构性偏离(增删场景/改因果/改人物行动逻辑/能力越权/"
+    "信息边界——未必是偏离大纲)。\n"
     "反AI检查(命中任一即 style 记 ≤5 并 revise,feedback 逐条指出):\n"
     "- 能力越权:关键结论由能力/系统直接给出,人物没有推理过程;\n"
     "- 信息倾泻:连续三行以上的设定罗列/数值播报/面板堆砌;\n"
