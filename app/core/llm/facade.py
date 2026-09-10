@@ -132,6 +132,7 @@ class LLMFacade:
                 model=route.model,
                 tokens_in=resp.tokens_in,
                 tokens_out=resp.tokens_out,
+                cached_tokens=resp.cached_tokens,
                 latency_ms=latency_ms,
                 trace_id=trace_id,
                 stage=stage,
@@ -183,16 +184,19 @@ class LLMFacade:
                 # 不可得时按字符数粗估(//2,保守值)
                 usage = getattr(client, "last_usage", None)
                 if usage:
-                    tokens_in, tokens_out = usage
+                    tokens_in, tokens_out = usage[0], usage[1]
+                    cached = usage[2] if len(usage) > 2 else 0
                 else:
                     tokens_in = sum(len(m.content) for m in messages) // 2
                     tokens_out = sum(len(p) for p in parts) // 2
+                    cached = 0
                 self._emit_usage(
                     UsageRecord(
                         agent=role.value,
                         model=route.model,
                         tokens_in=tokens_in,
                         tokens_out=tokens_out,
+                        cached_tokens=cached,
                         latency_ms=latency_ms,
                         trace_id=trace_id,
                         stage=stage,

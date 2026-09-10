@@ -456,7 +456,10 @@ def usage(story_id: str):
     deps, _ = engine()
     by_agent = deps.conn.execute(
         "SELECT agent, model, COUNT(*) calls, SUM(tokens_in) tin, SUM(tokens_out) tout,"
-        " SUM(latency_ms) latency FROM usage_log WHERE story_id=? GROUP BY agent, model",
+        " SUM(cached_tokens) cached, SUM(latency_ms) latency,"
+        " CAST(ROUND(100.0 * SUM(cached_tokens) / NULLIF(SUM(tokens_in), 0)) AS INTEGER)"
+        "   AS cache_hit_pct"
+        " FROM usage_log WHERE story_id=? GROUP BY agent, model",
         (story_id,)).fetchall()
     return [dict(r) for r in by_agent]
 

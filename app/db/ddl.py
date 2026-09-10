@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS usage_log (
   model       TEXT NOT NULL,
   tokens_in   INTEGER,
   tokens_out  INTEGER,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,    -- prompt 缓存命中 token(命中率=cached/tokens_in)
   latency_ms  INTEGER,
   trace_id    TEXT,
   stage       TEXT,                            -- 调用环节(细纲/初稿/评审/抽取/摘要...)
@@ -299,6 +300,8 @@ _MIGRATIONS = [
     ("entities", "chapter_no", "ALTER TABLE entities ADD COLUMN chapter_no INTEGER"),
     ("entities", "status", "ALTER TABLE entities ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
     ("entity_links", "chapter_no", "ALTER TABLE entity_links ADD COLUMN chapter_no INTEGER"),
+    ("usage_log", "cached_tokens",
+     "ALTER TABLE usage_log ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0"),
     # 索引(table, 列校验放宽为表存在即建,IF NOT EXISTS 幂等)
     ("entities", "__idx_entities_story__",
      "CREATE INDEX IF NOT EXISTS idx_entities_story ON entities(story_id, status)"),

@@ -16,12 +16,18 @@ from app.core.llm.base import (
 )
 
 
+def _cached_tokens(usage) -> int:
+    """OpenAI 兼容 usage.prompt_tokens_details.cached_tokens(不支持的服务缺省 0)。"""
+    details = getattr(usage, "prompt_tokens_details", None)
+    return getattr(details, "cached_tokens", 0) or 0
+
+
 class OpenAICompatChat(ChatClient):
     def __init__(self, api_key: str, base_url: str):
         self._client = OpenAI(api_key=api_key, base_url=base_url)
-        # 最近一次 stream 的精确 usage(prompt, completion);
+        # 最近一次 stream 的精确 usage(prompt, completion, cached);
         # 单任务串行约束下由 facade 读取埋点(非流式不经过此属性)
-        self.last_usage: tuple[int, int] | None = None
+        self.last_usage: tuple[int, int, int] | None = None
 
     def chat(
         self,
@@ -49,6 +55,7 @@ class OpenAICompatChat(ChatClient):
             model=model,
             tokens_in=getattr(usage, "prompt_tokens", 0) or 0,
             tokens_out=getattr(usage, "completion_tokens", 0) or 0,
+            cached_tokens=_cached_tokens(usage) if usage is not None else 0,
             finish_reason=choice.finish_reason or "",
         )
 
@@ -76,7 +83,8 @@ class OpenAICompatChat(ChatClient):
             usage = getattr(chunk, "usage", None)
             if usage is not None:
                 self.last_usage = (getattr(usage, "prompt_tokens", 0) or 0,
-                                   getattr(usage, "completion_tokens", 0) or 0)
+                                   getattr(usage, "completion_tokens", 0) or 0,
+                                   _cached_tokens(usage))
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 

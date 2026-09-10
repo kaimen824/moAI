@@ -26,8 +26,9 @@ def make_usage_sink(conn: sqlite3.Connection, lock: Optional[threading.RLock] = 
         def _write() -> None:
             conn.execute(
                 "INSERT INTO usage_log "
-                "(id, story_id, agent, model, tokens_in, tokens_out, latency_ms, trace_id, stage, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, story_id, agent, model, tokens_in, tokens_out, cached_tokens,"
+                " latency_ms, trace_id, stage, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     uuid.uuid4().hex,
                     record.story_id or None,
@@ -35,6 +36,7 @@ def make_usage_sink(conn: sqlite3.Connection, lock: Optional[threading.RLock] = 
                     record.model,
                     record.tokens_in,
                     record.tokens_out,
+                    record.cached_tokens,
                     record.latency_ms,
                     record.trace_id,
                     record.stage,

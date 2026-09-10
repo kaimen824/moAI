@@ -19,6 +19,7 @@ class LLMResponse:
     model: str
     tokens_in: int = 0
     tokens_out: int = 0
+    cached_tokens: int = 0        # prompt 命中缓存的 token 数(不支持的服务为 0)
     finish_reason: str = ""
 
 
@@ -37,6 +38,7 @@ class UsageRecord:
     model: str
     tokens_in: int = 0
     tokens_out: int = 0
+    cached_tokens: int = 0         # prompt 缓存命中 token(缓存命中率 = cached/tokens_in)
     latency_ms: int = 0
     trace_id: str = ""
     stage: str = ""                # 调用环节:outline/draft/review/extract/summary/...

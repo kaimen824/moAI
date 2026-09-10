@@ -25,9 +25,10 @@ class FakeChat(ChatClient):
     def chat(self, model, messages, *, temperature=0.7, max_tokens=None, response_format=None):
         self.calls.append({"model": model, "temperature": temperature, "n": len(messages)})
         return LLMResponse(content=json.dumps({"ok": True}), model=model,
-                           tokens_in=10, tokens_out=5)
+                           tokens_in=10, tokens_out=5, cached_tokens=4)
 
     def stream(self, model, messages, *, temperature=0.7, max_tokens=None):
+        self.last_usage = (8, 4, 6)   # prompt/completion/cached(流式精确 usage 模拟)
         for token in ["你好", "世界"]:
             yield token
 
@@ -70,6 +71,7 @@ def test_chat_emits_usage_to_sink(db, isolated_settings):
     assert row["agent"] == "WRITER"
     assert row["model"] == "glm-5"
     assert row["tokens_in"] == 10 and row["tokens_out"] == 5
+    assert row["cached_tokens"] == 4          # 缓存命中透传落库
     assert row["stage"] == "draft"
     assert row["latency_ms"] >= 0
 
@@ -80,6 +82,7 @@ def test_stream_emits_usage_after_consumption(db, isolated_settings):
     assert chunks == ["你好", "世界"]
     row = db.execute("SELECT * FROM usage_log").fetchone()
     assert row["agent"] == "WRITER"
+    assert row["tokens_in"] == 8 and row["cached_tokens"] == 6   # 流式精确 usage(含缓存)
 
 
 def test_embed_emits_usage(db, isolated_settings):

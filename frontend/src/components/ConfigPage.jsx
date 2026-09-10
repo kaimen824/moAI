@@ -46,7 +46,12 @@ export default function ConfigPage({ storyId }) {
                     <Text size="2" weight="bold">{u.agent}</Text>
                     <Code size="1">{u.model}</Code>
                     <Text size="1" color="gray">调用 {u.calls} 次 · {(u.tin || 0) + (u.tout || 0)} tokens</Text>
-                    <Text size="1" color="gray">{((u.latency || 0) / 1000).toFixed(1)}s 累计</Text>
+                    <Text size="1" color="gray">
+                      {((u.latency || 0) / 1000).toFixed(1)}s 累计
+                      {u.cache_hit_pct != null && u.cached > 0
+                        && <span style={{ color: 'var(--grass-11)' }}>
+                          {' '}· 缓存 {u.cache_hit_pct}%({u.cached} tok)</span>}
+                    </Text>
                   </Flex>
                 </Card>
               ))}
