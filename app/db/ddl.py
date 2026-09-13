@@ -143,6 +143,9 @@ CREATE TABLE IF NOT EXISTS plot_threads (
   planted_chapter INTEGER,
   resolved_chapter INTEGER,
   status          TEXT NOT NULL DEFAULT 'open', -- open|resolved|dropped
+  tier            TEXT,                         -- short|long(ADR-0020;NULL=存量未回填,按 short 计账龄)
+  basis           TEXT,                         -- plant 依据/长线绑定(一句,审计用)
+  escalated_chapter INTEGER,                    -- short->long 升格章(仅允许一次,防无限递延)
   branch_id       TEXT NOT NULL,
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
@@ -302,6 +305,11 @@ _MIGRATIONS = [
     ("entity_links", "chapter_no", "ALTER TABLE entity_links ADD COLUMN chapter_no INTEGER"),
     ("usage_log", "cached_tokens",
      "ALTER TABLE usage_log ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0"),
+    # ADR-0020 伏笔治理:tier 双档 + plant 依据 + 升格章(防二次递延)
+    ("plot_threads", "tier", "ALTER TABLE plot_threads ADD COLUMN tier TEXT"),
+    ("plot_threads", "basis", "ALTER TABLE plot_threads ADD COLUMN basis TEXT"),
+    ("plot_threads", "escalated_chapter",
+     "ALTER TABLE plot_threads ADD COLUMN escalated_chapter INTEGER"),
     # 索引(table, 列校验放宽为表存在即建,IF NOT EXISTS 幂等)
     ("entities", "__idx_entities_story__",
      "CREATE INDEX IF NOT EXISTS idx_entities_story ON entities(story_id, status)"),

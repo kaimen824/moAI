@@ -41,7 +41,7 @@ def make_env(db, embed_fn=None):
         id="fact_dead", story_id="", type="event", content="师父被害(第1章)",
         chapter_established=1, branch_id=branch,
     )], visibility=[VisibilityEntry("fact_dead", hero, "known_full", None, 1, branch)])
-    repo.upsert_plot_thread(AgentContext("reviewer", story_id), PlotThread(
+    repo.upsert_plot_thread(AgentContext("thread_reviewer", story_id), PlotThread(
         id="", story_id="", description="师父之死的真凶", branch_id=branch,
         planted_chapter=1, status="open"))
 

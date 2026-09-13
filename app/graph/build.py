@@ -18,6 +18,7 @@ from typing import Callable
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from app.core.config import THREAD_LONG_AGE, THREAD_SHORT_AGE
 from app.graph.agents.character_manager import InitCharactersNode, UpdateCharactersNode
 from app.graph.agents.entity_resolver import EntityResolveNode
 from app.graph.agents.event_extractor import EventExtractNode
@@ -28,6 +29,7 @@ from app.graph.agents.outline_reviewer import (
     ReviewStageOutline,
 )
 from app.graph.agents.quality_reviewer import QualityReviewNode
+from app.graph.agents.thread_reviewer import ThreadReviewNode
 from app.graph.agents.supervisor import (
     ChapterSliceNode,
     CoauthorNode,
@@ -151,7 +153,7 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
     exhausted = bool(state.get("rewrite_exhausted"))
     if state.get("auto_mode") and not exhausted:
         decision = {"action": "confirm",
-                    "threads": state.get("quality_review", {}).get("thread_changes", [])}
+                    "threads": state.get("thread_review", {}).get("thread_changes", [])}
     else:
         decision = interrupt({
             "type": "user_review_chapter",
@@ -159,7 +161,8 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
             "draft": state.get("draft", ""),
             "outline_review": state.get("outline_review", {}),
             "quality_review": state.get("quality_review", {}),
-            "thread_changes": state.get("quality_review", {}).get("thread_changes", []),
+            "thread_review": state.get("thread_review", {}),
+            "thread_changes": state.get("thread_review", {}).get("thread_changes", []),
             "conflicts": state.get("fact_changes", {}).get("conflicts", []),
             "rewrite_exhausted": exhausted,
         })
@@ -197,7 +200,15 @@ def build_context(state: GraphState, deps: Deps) -> dict:
     for t in result.active_threads:
         planted = t.get("planted_chapter") or 0
         t["_suspend"] = bool(planted and 0 < chapter_no - planted < 3)
+        # ADR-0020 账龄分级:超 tier 账龄线的活跃伏笔标"应回收"
+        # (升格过的按 long 线重算;NULL=存量未回填,按 short 保守催收)
+        tier = t.get("tier") or "short"
+        limit = THREAD_LONG_AGE if tier == "long" else THREAD_SHORT_AGE
+        t["_overdue"] = bool(
+            planted and chapter_no - planted > limit and not t.get("escalated_chapter"))
     bundle["style_ban"] = deps.recent_phrase_blacklist(state["story_id"], chapter_no)
+    # ADR-0019 规范名词典:叙述层统一用名(实体表 canonical + 别名)
+    bundle["canonical_names"] = deps.canonical_entity_registry(state["story_id"])
     present = set(present_ids)
     intents = [i for i in state.get("character_intents", [])
                if i.get("character_id") in present]
@@ -215,6 +226,7 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "expanded_entities": len(result.expanded_entities),
         "user_directives": len(directives),
         "style_ban": len(bundle["style_ban"]),
+        "canonical_names": len(bundle["canonical_names"]),
         "intents": len(intents),
     }
     return {"context_bundle": bundle, "present_characters": present_ids,
@@ -363,6 +375,9 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_node("polish_draft", _node(PolishDraftNode(deps.llm), deps))
     g.add_node("review_draft_outline", _node(ReviewDraftOutline(deps.llm), deps))
     g.add_node("review_quality", _node(QualityReviewNode(deps.llm), deps))
+    # 伏笔评审(ADR-0020 单独评审):与双评审并列 fan-out,无 pass/revise 裁决,
+    # 不参与 merge 表决——merge 仍只消费 outline/quality 两路
+    g.add_node("review_threads", _node(ThreadReviewNode(deps.llm), deps))
     g.add_node("merge_reviews", _node(merge_reviews, deps))
     g.add_node("user_review_chapter", functools.partial(user_review_chapter, deps=deps))
     g.add_node("event_extract", _node(EventExtractNode(deps.llm), deps))
@@ -409,13 +424,17 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_edge("chapter_slice", "build_context")
     g.add_edge("build_context", "write_draft")
 
-    # 双评审 fan-out / fan-in(并行);返工分两路:精校 / 全量重写(ADR-0018)
+    # 三路评审 fan-out / fan-in(ADR-0020:伏笔评审与双评审并列,不参与表决);
+    # 返工分两路:精校 / 全量重写(ADR-0018)
     g.add_edge("write_draft", "review_draft_outline")
     g.add_edge("write_draft", "review_quality")
+    g.add_edge("write_draft", "review_threads")
     g.add_edge("polish_draft", "review_draft_outline")
     g.add_edge("polish_draft", "review_quality")
+    g.add_edge("polish_draft", "review_threads")
     g.add_edge("review_draft_outline", "merge_reviews")
     g.add_edge("review_quality", "merge_reviews")
+    g.add_edge("review_threads", "merge_reviews")
     g.add_conditional_edges(
         "merge_reviews", route_after_merge,
         {"polish": "polish_draft", "rewrite": "write_draft",

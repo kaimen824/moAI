@@ -42,6 +42,7 @@ class AgentRole(str, Enum):
     ENTITY = "ENTITY"              # 实体消歧裁决(ADR-0015)— 便宜
     POLISH = "POLISH"              # 文风精校(ADR-0018)— 便宜
     SUMMARY = "SUMMARY"            # 摘要 — 便宜
+    THREAD = "THREAD"              # 伏笔评审(ADR-0020)— 中(埋设准入/tier/到期复核)
     EMBEDDING = "EMBEDDING"        # embedding 独立配置
 
 
@@ -57,12 +58,22 @@ DEFAULT_MODELS: dict[AgentRole, str] = {
     AgentRole.ENTITY: "deepseek-v3",
     AgentRole.POLISH: "deepseek-v3",
     AgentRole.SUMMARY: "deepseek-v3",
+    AgentRole.THREAD: "deepseek-v3",
     AgentRole.EMBEDDING: "qwen3.7-text-embedding",
 }
 
 DEFAULT_DB_PATH = Path("data") / "novel_agent.db"
 
 MODEL_ENV_PREFIX = "MODEL__"
+
+# 伏笔治理参数(ADR-0020,所有者可调):tier 双档账龄线 + 活跃容量上限。
+# 账龄=当前章-埋设章,超龄进"应优先回收"梯度;容量超限时新 plant 拒绝落库
+# (代码侧硬校验,契约同步告知模型自行权衡)。tier 缺省(NULL,存量未回填)
+# 按 short 计账龄——保守催收,回填后自然归位。
+THREAD_SHORT_AGE = 8     # 短线伏笔超龄线(章)
+THREAD_LONG_AGE = 40     # 长线伏笔超龄线(章)
+THREAD_SHORT_CAP = 8     # 活跃短线容量
+THREAD_LONG_CAP = 12     # 活跃长线容量
 
 
 @dataclass

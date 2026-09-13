@@ -1,4 +1,8 @@
-"""审校 Agent:质量评审(一致性/伏笔/文风)+ 伏笔变更建议(ADR-0006:写者,人工复核后生效)。"""
+"""审校 Agent:质量评审(一致性/伏笔处理/文风)。
+
+伏笔账本变更(thread_changes)已剥离至伏笔评审(ADR-0020 单独评审);
+此处 foreshadow 维度只评"本章对既有伏笔的处理是否得当",不产账本变更。
+"""
 
 from __future__ import annotations
 
@@ -9,10 +13,8 @@ _SYSTEM = (
     "你是小说质量审校员。严格按 JSON 输出:"
     '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"foreshadow":0-10,"style":0-10},'
     '"fix_scope":"style|local|content",'
-    '"feedback":"具体修改意见",'
-    '"thread_changes":[{"description":"伏笔描述","action":"plant|advance|resolve|drop"}]}。'
-    "thread_changes 列出本章正文中 埋设(plant)/推进(advance)/回收(resolve)/放弃(drop) 的伏笔;"
-    "无伏笔变更时给空数组。任一维度低于 7 分给 revise。\n"
+    '"feedback":"具体修改意见"}。'
+    "任一维度低于 7 分给 revise。\n"
     "fix_scope:revise 时标注问题性质——\n"
     "- style:纯文风问题(措辞/节奏/冗余/复读表达/措辞层面的倾泻);\n"
     "- local:局部事实修正,且必须在'必须修改'里给出精确处方(将X改为Y:"

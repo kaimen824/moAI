@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from app.core.config import THREAD_LONG_CAP, THREAD_SHORT_CAP
 from app.core.llm.base import LLMResponse, UsageRecord
 from app.core.llm.facade import LLMFacade
 from app.db.database import init_db
@@ -246,6 +247,9 @@ class Deps:
         虚词边界过滤:以虚词开头/结尾的候选(语法黏连模式)不入清单——
         "人名+没有/说""名词+的"是自然汉语,禁用它们等于猎杀语法,写手
         无法稳定避开,会造成评审-重写死循环(ch12 实证)。
+        实体指称排除(ADR-0019):与实体名/别名/角色名互为子串的短语不入清单——
+        剧情连续章指称同一地点/机构是正常指称密度,不是复读口头禅
+        (ch10"精神病院"12 次进黑名单、评审每轮开替换处方的实证)。
         """
         with self.run_lock:
             rows = self.conn.execute(
@@ -313,6 +317,21 @@ class Deps:
                 trimmed[q] = trimmed.get(q, 0) + c
         phrases = trimmed
 
+        # 实体指称排除(ADR-0019):实体名/别名/角色名的双向子串剔除——
+        # "精神病院""中央后勤部"这类专有名词跨章高频是叙事骨架,禁用它们
+        # 逼写手规避式改写,只会稀释指代并重燃评审-重写循环
+        with self.run_lock:
+            protected = {r["name"] for r in self.conn.execute(
+                "SELECT name FROM entities WHERE story_id=? AND status='active'",
+                (story_id,))}
+            protected |= {r["alias"] for r in self.conn.execute(
+                "SELECT alias FROM entity_aliases WHERE story_id=?", (story_id,))}
+            protected |= {r["name"] for r in self.conn.execute(
+                "SELECT name FROM characters WHERE story_id=?", (story_id,))}
+        if protected:
+            phrases = {p: c for p, c in phrases.items()
+                       if not any((p in n or n in p) for n in protected)}
+
         # 去包含:短语被更长高频短语覆盖时丢弃
         ordered = sorted(phrases, key=lambda p: (-len(p), p))
         kept: list[str] = []
@@ -321,6 +340,28 @@ class Deps:
                 kept.append(p)
         kept.sort(key=lambda p: -phrases[p])
         return kept[:limit]
+
+    def canonical_entity_registry(self, story_id: str, *, cap: int = 60) -> list[dict]:
+        """规范名词典(ADR-0019):active 实体名 + 已注册别名 -> 叙述层统一用名。
+
+        角色类实体不入册(角色名由[在场角色卡]注入,避免双份);
+        返回 [{name, type, aliases:[...]}],按创建序,超量截断保 token。
+        """
+        with self.run_lock:
+            ents = [dict(r) for r in self.conn.execute(
+                "SELECT name, type FROM entities"
+                " WHERE story_id=? AND status='active' AND type != 'character'"
+                " ORDER BY created_at LIMIT ?", (story_id, cap))]
+            alias_rows = self.conn.execute(
+                "SELECT a.alias, e.name FROM entity_aliases a"
+                " JOIN entities e ON e.id = a.entity_id WHERE a.story_id=?",
+                (story_id,)).fetchall()
+        by_name = {e["name"]: e for e in ents}
+        for r in alias_rows:
+            e = by_name.get(r["name"])
+            if e:
+                e.setdefault("aliases", []).append(r["alias"])
+        return ents
 
     def character_name_map(self, state: dict) -> dict[str, str]:
         """名字 -> 角色 id(ADR-0015 升级:并入实体别名表,修别称盲区)。
@@ -594,16 +635,26 @@ class Deps:
                     " updated_at=? WHERE id=?",
                     (u.get("profile_append", ""), _now(), u["character_id"]),
                 )
-            # 5) 伏笔(人工已确认的 thread_changes)
+            # 5) 伏笔(人工已确认的 thread_changes;ADR-0020:伏笔评审产出,
+            #    plant 必带 tier+basis;容量超限硬校验拒绝——契约已告知模型,
+            #    此处兜底防漏)
             for t in state.get("thread_changes", []):
                 action = t.get("action", "plant")
                 if action == "plant":
+                    tier = t.get("tier") if t.get("tier") in ("short", "long") else "short"
+                    cap = THREAD_LONG_CAP if tier == "long" else THREAD_SHORT_CAP
+                    open_n = self.conn.execute(
+                        "SELECT COUNT(*) c FROM plot_threads"
+                        " WHERE story_id=? AND status='open' AND COALESCE(tier,'short')=?",
+                        (story_id, tier)).fetchone()["c"]
+                    if open_n >= cap:
+                        continue
                     self.conn.execute(
                         "INSERT INTO plot_threads (id, story_id, description, planted_chapter,"
-                        " resolved_chapter, status, branch_id, created_at, updated_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?)",
+                        " resolved_chapter, status, tier, basis, branch_id,"
+                        " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                         (uuid.uuid4().hex, story_id, t.get("description", ""), chapter_no,
-                         None, "open", branch, _now(), _now()),
+                         None, "open", tier, t.get("basis", ""), branch, _now(), _now()),
                     )
                 else:
                     # advance/resolve/drop:按描述匹配最近 open 线
@@ -619,6 +670,23 @@ class Deps:
                             " WHERE id=?",
                             (status, chapter_no if action != "advance" else None, _now(), row["id"]),
                         )
+            # 6) 伏笔复核裁决生效(ADR-0020):escalate 升格为账本管理动作,
+            #    不进剧情确认链,定稿时直接落库;仅允许一次(已 long/已升格的跳过)
+            for r in (state.get("thread_review", {}) or {}).get("reviews", []):
+                if r.get("verdict") != "escalate":
+                    continue
+                row = self.conn.execute(
+                    "SELECT id FROM plot_threads WHERE story_id=? AND status='open'"
+                    " AND escalated_chapter IS NULL AND COALESCE(tier,'short')='short'"
+                    " AND description LIKE ? ORDER BY planted_chapter DESC LIMIT 1",
+                    (story_id, f"%{r.get('description','')[:12]}%"),
+                ).fetchone()
+                if row:
+                    self.conn.execute(
+                        "UPDATE plot_threads SET tier='long', escalated_chapter=?,"
+                        " updated_at=? WHERE id=?",
+                        (chapter_no, _now(), row["id"]),
+                    )
             # 6) 章摘要(检索索引)+ 阶段聚合摘要(分层记忆)
             summary_vec = emb_vecs[-1] if emb_vecs else None
             self.conn.execute(

@@ -24,10 +24,12 @@ _SYSTEM = (
     "反AI检查(命中任一,consistency 至少扣 2 分并在 feedback 逐条指出):\n"
     "- 能力越权:关键结论(谁做的/为什么/怎么办)由能力、系统或直觉直接给出,"
     "而非人物观察推理得出;\n"
-    "- 信息倾泻:连续超过三行的设定罗列、数值播报或面板堆砌;\n"
     "- 主角全知:无信息来源却正确的推断;\n"
     "- 无代价胜利:本章目标达成且没有付出、损失或遗留问题;\n"
-    "- 复读表达:与近章高度重复的句式或口头禅(参见[禁用表达]清单,若提供)。\n"
+    "- 结构性信息过载:单场景塞入超出剧情需要的设定/数值/面板数量"
+    "(场景信息负载问题;措辞层面的罗列写法由质量审校专责,此处不评)。\n"
+    "文风问题(措辞/节奏/冗余/复读表达)不在你的职责内——你只评一致性、结构"
+    "与信息边界,发现文风问题也不用提(ADR-0019 职责切分)。\n"
     "feedback 必须具体可执行,无论结论如何都要给:① 至多一条亮点,且不得是"
     "'延续既有风格'式的加码夸奖(如'更多数据流描写很精彩'——这正是要抑制的);"
     "② 风险或待改点(pass 也要列);"
@@ -80,16 +82,13 @@ class ReviewDraftOutline(BaseAgent):
     role = AgentRole.OUTLINE
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
-        ban = "\n".join(f"- {p}" for p in
-                        state.get("context_bundle", {}).get("style_ban", []))
         verdict = self.ask_json(
             _SYSTEM.replace('"structure":0-10', '"fidelity":0-10'),
             f"[评审对象] 本章正文草稿\n{state.get('draft','')}\n\n"
             f"[基准] 本章要点\n{state.get('chapter_brief','')}\n\n"
             f"[基准] 总大纲(当前卷)\n{state.get('master_outline','')[:1500]}\n\n"
             f"[上期衔接(若草稿重演/复述其中已发生事件,判 revise)]\n"
-            f"{deps.recent_carryover(state)}"
-            + (f"\n\n[禁用表达(近章高频复现,本章出现即扣分)]\n{ban}" if ban else ""),
+            f"{deps.recent_carryover(state)}",
             stage="review_draft_outline",
             story_id=state.get("story_id", ""),
         )

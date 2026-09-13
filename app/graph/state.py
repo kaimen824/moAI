@@ -40,7 +40,8 @@ class GraphState(TypedDict, total=False):
     draft: str
     rewrite_count: int
     outline_review: dict          # 大纲 Agent 成稿裁决
-    quality_review: dict          # 审校裁决(含伏笔变更建议)
+    quality_review: dict          # 审校裁决(伏笔变更建议已剥离,ADR-0020)
+    thread_review: dict           # 伏笔评审裁决(thread_changes + 超龄复核 reviews)
     merged_verdict: str           # pass | revise | block | needs_user
     rewrite_exhausted: bool       # 达重写上限仍未通过 -> 交用户裁决
 
@@ -48,7 +49,7 @@ class GraphState(TypedDict, total=False):
     fact_changes: dict            # 事件管理抽取(facts/beliefs/visibility/entities/links)
     entity_changes: dict          # 实体消歧产物(ADR-0015:new_entities/aliases/links/proposals)
     character_changes: list[dict] # 角色卡更新
-    thread_changes: list[dict]    # 伏笔变更(审校建议,人工已确认)
+    thread_changes: list[dict]    # 伏笔变更(伏笔评审建议,人工已确认)
     chapter_summary: str
     stage_summary: str            # 阶段末章时的聚合摘要(layer='stage')
     entity_content_updates: list[dict]  # 阶段末实体条目滚动(ADR-0015 裁决②)

@@ -35,6 +35,10 @@ def test_render_context_blocks():
                 {"description": "古碑来历", "planted_chapter": 1, "_suspend": True},
                 {"description": "旧神残渣", "planted_chapter": 2, "_suspend": False}],
             "style_ban": ["大脑飞速运转", "瞳孔骤缩"],
+            "canonical_names": [
+                {"name": "审计部", "type": "faction", "aliases": ["审计部外勤组"]},
+                {"name": "精神疗养院", "type": "location"},
+            ],
         },
     }
     out = render_context(state)
@@ -43,9 +47,12 @@ def test_render_context_blocks():
     assert "[在场角色意图" in out and "顾山海" in out and "夺回锁链" in out
     assert "[悬置伏笔(只许加深神秘感,严禁解释或回收)]" in out
     assert "古碑来历" in out.split("[悬置伏笔")[1]        # 悬置组含早埋伏笔
-    assert "[活跃伏笔(可推进;每章至多推进一条)]" in out
+    assert "[活跃伏笔(可推进;每章至多推进一条;标[应回收]的优先安排)]" in out
     assert "旧神残渣" in out.split("[活跃伏笔")[1].split("[悬置伏笔")[0]
     assert "[禁用表达" in out and "大脑飞速运转" in out
+    canon = out.split("[实体规范名")[1]                     # ADR-0019 词典段
+    assert "审计部(势力)" in canon and "又称:审计部外勤组" in canon
+    assert "精神疗养院(地点)" in canon
 
 
 # ---------- 动态句式黑名单 ----------
@@ -113,6 +120,69 @@ def test_recent_phrase_blacklist_empty_history(deps):
     d, conn = deps
     story_id, _ = d.repo.create_story("新书", "测试")
     assert d.recent_phrase_blacklist(story_id, 1) == []
+
+
+def _ins_entity(conn, story_id, name, etype="faction"):
+    import uuid
+    from app.graph.runtime import _now
+    conn.execute(
+        "INSERT INTO entities (id, story_id, type, name, content, chapter_no,"
+        " status, created_at, updated_at) VALUES (?,?,?,?,?,?, 'active', ?, ?)",
+        (uuid.uuid4().hex, story_id, etype, name, f"{name}的条目", 1, _now(), _now()))
+    conn.commit()
+    return name
+
+
+def test_recent_phrase_blacklist_excludes_entity_references(deps):
+    """ADR-0019 实体指称排除:实体名/别名/角色名(双向子串)不入禁用清单——
+    剧情连续章指称同一地点/机构是正常指称密度(ch10"精神病院"实证);
+    真口头禅仍要命中。"""
+    d, conn = deps
+    story_id, branch = d.repo.create_story("实体排除", "测试")
+    import uuid
+    from app.graph.runtime import _now
+    _ins_entity(conn, story_id, "中央后勤部")
+    _ins_entity(conn, story_id, "精神疗养院", "location")
+    conn.execute(
+        "INSERT INTO entity_aliases (alias, story_id, entity_id, created_at)"
+        " SELECT '精神病院', ?, id, ? FROM entities WHERE story_id=? AND name='精神疗养院'",
+        (story_id, _now(), story_id))
+    conn.execute(
+        "INSERT INTO characters (id, story_id, name, profile, created_at, updated_at)"
+        " VALUES (?,?,?,?,?,?)",
+        (uuid.uuid4().hex, story_id, "林默", "", _now(), _now()))
+    conn.commit()
+
+    entity_ref = "他潜入中央后勤部交材料,路过精神疗养院的大门,看见林默出手。"
+    tic = "他的大脑飞速运转起来"
+    for no in range(1, 5):
+        _ins_chapter(conn, story_id, branch, no, f"{entity_ref}然后做了第{no}件事。{tic},想出了办法。")
+
+    ban = d.recent_phrase_blacklist(story_id, 6)
+    assert not any("后勤部" in p for p in ban)        # 实体名(含子串扩展)被保护
+    assert not any("精神病院" in p or "疗养院" in p for p in ban)  # 别名同样保护
+    assert not any("林默" in p for p in ban)          # 角色名保护
+    assert any("大脑飞速运转" in p for p in ban)      # 真口头禅(跨章一致)仍然命中
+
+
+def test_canonical_entity_registry(deps):
+    """ADR-0019 规范名词典:active 非角色实体 + 别名挂载;角色类不入册。"""
+    d, conn = deps
+    story_id, _ = d.repo.create_story("词典", "测试")
+    from app.graph.runtime import _now
+    _ins_entity(conn, story_id, "审计部")
+    _ins_entity(conn, story_id, "林默", "character")
+    conn.execute(
+        "INSERT INTO entity_aliases (alias, story_id, entity_id, created_at)"
+        " SELECT '审计部外勤组', ?, id, ? FROM entities WHERE story_id=? AND name='审计部'",
+        (story_id, _now(), story_id))
+    conn.commit()
+
+    reg = d.canonical_entity_registry(story_id)
+    names = [e["name"] for e in reg]
+    assert "审计部" in names and "林默" not in names   # 角色不入册
+    entry = next(e for e in reg if e["name"] == "审计部")
+    assert entry.get("aliases") == ["审计部外勤组"]
 
 
 # ---------- 精校路由判定(ADR-0018 修订:style|local → 精校)----------

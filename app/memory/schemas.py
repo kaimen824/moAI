@@ -92,6 +92,9 @@ class PlotThread:
     planted_chapter: int | None = None
     resolved_chapter: int | None = None
     status: str = "open"         # open|resolved|dropped
+    tier: str | None = None      # short|long(ADR-0020;NULL 按 short 计账龄)
+    basis: str | None = None     # plant 依据/长线绑定(审计用)
+    escalated_chapter: int | None = None   # short->long 升格章(仅一次)
     created_at: str = ""
     updated_at: str = ""
 

@@ -79,12 +79,24 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
             for e in bundle["expanded_entities"][:8]
         )
         parts.append(f"[相关设定(在场角色的关联实体,一跳邻居;照应设定,不得矛盾)]\n{ents}")
+    if bundle.get("canonical_names"):
+        canon = "\n".join(
+            f"- {e['name']}({_TYPE_ZH.get(e.get('type'), e.get('type', '?'))})"
+            + (f"(又称:{'/'.join(e['aliases'])})" if e.get("aliases") else "")
+            for e in bundle["canonical_names"][:60]
+        )
+        parts.append(
+            "[实体规范名(全书专有名词,叙述层一律用规范名;别名仅限角色对白口吻)]\n"
+            + canon)
     threads = bundle.get("active_threads") or []
     adv = [t for t in threads if not t.get("_suspend")]
     susp = [t for t in threads if t.get("_suspend")]
     if adv:
-        th = "\n".join(f"- {t['description']}" for t in adv)
-        parts.append(f"[活跃伏笔(可推进;每章至多推进一条)]\n{th}")
+        # 超龄伏笔标[应回收](ADR-0020 账龄梯度:回收优先级显式传导给写手)
+        th = "\n".join(
+            ("- [应回收] " if t.get("_overdue") else "- ") + t["description"]
+            for t in adv)
+        parts.append(f"[活跃伏笔(可推进;每章至多推进一条;标[应回收]的优先安排)]\n{th}")
     if susp:
         th = "\n".join(f"- {t['description']}" for t in susp)
         parts.append(f"[悬置伏笔(只许加深神秘感,严禁解释或回收)]\n{th}")

@@ -48,8 +48,11 @@ SCRIPTS: dict[str, str | dict] = {
                              "scores": {"consistency": 9, "fidelity": 9}, "feedback": "ok"},
     "review_quality": {"verdict": "pass",
                        "scores": {"consistency": 9, "foreshadow": 8, "style": 9},
-                       "feedback": "ok",
-                       "thread_changes": [{"description": "古碑的来历", "action": "plant"}]},
+                       "feedback": "ok"},
+    "review_threads": {"thread_changes": [
+        {"description": "古碑的来历", "action": "plant", "tier": "short",
+         "basis": "古碑来源与旧神线关联的近程悬念"}],
+        "reviews": []},
     "extract_facts": {
         "facts": [
             {"content": "沈砚在暴雨夜发现古碑", "type": "event", "confidence": "high",

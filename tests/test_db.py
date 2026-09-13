@@ -78,8 +78,9 @@ def test_acl_seed_writer_assignments(db):
     assert can("event_manager", "facts", "write") == 1
     assert can("event_manager", "beliefs", "write") == 1
     assert can("event_manager", "temporal_relations", "write") == 1
-    # 审校:plot_threads 写,但 facts 不可写
-    assert can("reviewer", "plot_threads", "write") == 1
+    # 伏笔评审:plot_threads 写(ADR-0020 自审校移交,单写者不变式不变)
+    assert can("thread_reviewer", "plot_threads", "write") == 1
+    assert can("reviewer", "plot_threads", "write") == 0
     assert can("reviewer", "facts", "write") == 0
     assert can("reviewer", "facts", "read") == 1
     # 角色管理:characters 写(ADR-0015 起实体族移交 entity_manager,单写者)

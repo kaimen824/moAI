@@ -1,8 +1,8 @@
 """agent_acl 种子数据(ADR-0006 权限矩阵)。
 
-单写者不变式:facts/beliefs/temporal_relations -> 事件管理;plot_threads -> 审校;
-characters/entities/entity_links -> 角色管理;大纲(outlines/stories)-> 主控。
-retrieval_service 为检索服务专用只读身份。
+单写者不变式:facts/beliefs/temporal_relations -> 事件管理;plot_threads -> 伏笔评审
+(ADR-0020 自审校移交);characters/entities/entity_links -> 角色管理;
+大纲(outlines/stories)-> 主控。retrieval_service 为检索服务专用只读身份。
 """
 
 # (agent_name, data_domain, can_read, can_write)
@@ -11,7 +11,7 @@ SEED_ACL: list[tuple[str, str, int, int]] = []
 # 读写域
 _WRITER_DOMAINS: dict[str, list[str]] = {
     "event_manager": ["facts", "beliefs", "fact_visibility", "temporal_relations"],
-    "reviewer": ["plot_threads"],
+    "thread_reviewer": ["plot_threads"],
     "character_manager": ["characters"],
     "entity_manager": ["entities", "entity_links", "entity_aliases", "entity_merge_proposals"],
     "supervisor": [
@@ -29,7 +29,7 @@ _READER_DOMAINS: dict[str, list[str]] = {
     "writer": ["outlines", "facts", "beliefs", "fact_visibility", "characters", "chapters",
                "chapter_summaries", "plot_threads", "entities"],
     "reviewer": ["outlines", "facts", "beliefs", "characters", "chapters",
-                 "chapter_summaries", "entities"],
+                 "chapter_summaries", "entities", "plot_threads"],
     "event_manager": ["outlines", "chapters", "characters", "chapter_summaries", "entities"],
     "character_manager": ["outlines", "facts", "beliefs", "chapters", "chapter_summaries",
                           "entities", "entity_links"],
