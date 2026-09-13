@@ -86,13 +86,13 @@ def evaluate(world_sizes=(10, 30, 60), seed: int = 42) -> dict:
                     if is_remote:
                         stats["naive_remote"][1] += 1
 
-                # POV 泄漏:上下文含"所有在场角色都不可见"或"部分不可见"的事实
-                for fid in got:
-                    visible_to = world.visibility.get(fid, set())
-                    char_names = set(ch.present_characters)
-                    if not (visible_to & char_names):
-                        stats["leak_structured"][1] += 1
-                        stats["leak_structured"][0] += 0
+                # POV 泄漏:分母=返回总条数,分子=对在场角色全部不可见的条目
+                # (与 naive 同口径;旧写法分母=泄漏次数且分子恒 0,指标恒真无判别力)
+                stats["leak_structured"][1] += len(got)
+                stats["leak_structured"][0] += sum(
+                    1 for fid in got
+                    if not (world.visibility.get(fid, set()) & set(ch.present_characters))
+                )
                 nv_total = len(nv["fact_ids"])
                 nv_leaks = sum(
                     1 for fid in nv["fact_ids"]
@@ -135,8 +135,9 @@ def render_report(results: dict) -> str:
         "## 结论要点",
         "- naive 远距离召回结构性为 0(窗口外事实不可见)——长篇一致性的根本缺陷;",
         "  structured 远距离召回>0 且随规模稳定(结构化查表不随篇幅衰减)",
-        "- structured POV 泄漏率为 0%:可见性在查询层强制过滤;",
-        "  naive 无角色概念,对在场角色保密的信息 ~2/3 直接进上下文",
+        "- POV 泄漏率为查询层指标:检索返回集合 vs 可见性 ground truth 逐条比对",
+        "  (分子/分母与 naive 同口径);生成正文层面的泄底不在本评测范围(e2e 审校覆盖)",
+        "- naive 无角色概念,对在场角色保密的信息 ~2/3 直接进上下文",
         "- 已知限制:structured 主路当前返回全部 POV 可见事实(上下文条数随篇幅增长),",
         "  相关性过滤(向量兜底 + 分层摘要索引)在真实语义数据上验证(设计已有,ADR-0002)",
         "",
