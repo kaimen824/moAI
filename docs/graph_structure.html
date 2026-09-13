@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小说 Agent · 图结构可视化</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #fafafa; color: #1f2937; }
+  header { padding: 20px 32px 8px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 13px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 32px 0; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .chip { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1.5px solid; }
+  .c-int { background: #fee2e2; border-color: #dc2626; }
+  .c-rev { background: #dbeafe; border-color: #2563eb; }
+  .c-agent { background: #f0fdf4; border-color: #16a34a; }
+  .c-io { background: #fef9c3; border-color: #ca8a04; }
+  .graph { padding: 12px 24px 32px; overflow: auto; }
+  .mermaid { display: flex; justify-content: center; }
+  details { margin: 0 32px 40px; font-size: 13px; }
+  pre { background: #111827; color: #d1d5db; padding: 14px; border-radius: 8px; overflow: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>小说 Agent 生产图(app/graph/build.py)</h1>
+  <div class="sub">共 23 节点 · 3 处 human-in-the-loop 中断 · 3 处轮次上限自动转人工 · 2 处 fan-out/fan-in · 1 处精校通道(ADR-0018)</div>
+</header>
+<div class="legend">
+  <span><i class="chip c-int"></i>人工中断点(interrupt)</span>
+  <span><i class="chip c-rev"></i>评审节点</span>
+  <span><i class="chip c-agent"></i>LLM Agent 节点</span>
+  <span><i class="chip c-io"></i>路由/编排节点</span>
+  <span>粗箭头 = 并行扇出(同 super-step)</span>
+  <span>虚线 = 条件边</span>
+</div>
+<div class="graph">
+<pre class="mermaid">
+flowchart TD
+    S((START)) -.->|"route_entry:首次创作"| CO
+    S -.->|"续写:chapters_done&gt;0 或 outline_confirmed"| NC
+
+    subgraph A["共创前置 · ADR-0011(仅首次)"]
+        CO["coauthor 共创访谈"] --> IC["init_characters 角色卡草案(暂存 state)"]
+        IC --> PC["persist_characters 透传暂存"]
+        PC --> GMO["gen_master_outline 总大纲"]
+        GMO --> RMO{"review_master_outline 大纲评审"}
+        RMO -.->|"revise/block ≤3轮(MASTER_REGEN_LIMIT,耗尽转人工)"| GMO
+    end
+
+    RMO -.->|"pass / 轮次耗尽带评审意见"| CMO
+    CMO{{"◉ 中断0:confirm_master_outline 总大纲确认(永人工,自动模式不代签)"}}
+    CMO -.->|"revise(用户反馈)"| GMO
+    CMO -.->|"confirm:落库大纲+角色卡+实体种子,chapters_done=0"| NC
+
+    NC{"next_chapter 阶段边界=stage_end_chapter<br/>重置 rewrite/stage_regen 计数"} -.->|"阶段首章"| SO
+    NC -.->|"非首章"| CS
+
+    subgraph B["阶段细纲闸"]
+        SO["stage_outline 阶段细纲"] --> RSO{"review_stage_outline"}
+        RSO -.->|"revise ≤3轮(STAGE_REGEN_LIMIT,耗尽转人工)"| SO
+        RSO -.->|"pass / 耗尽"| CSO
+        CSO{{"◉ 中断A:confirm_stage_outline(自动模式评审绿可代签)"}}
+        CSO -.->|"revise"| SO
+    end
+    CSO -.->|"confirm"| BC
+
+    CS["chapter_slice 本章切片"] --> BC["build_context 上下文组装<br/>(角色/伏笔/POV/实体/指令通道)"]
+    BC --> WD["write_draft 写稿"]
+
+    WD ==>|"fan-out"| RDO
+    WD ==>|"fan-out"| RQ
+    PD["polish_draft 精校既有稿(ADR-0018)"] ==>|"fan-out"| RDO
+    PD ==>|"fan-out"| RQ
+    RDO["review_draft_outline 成稿大纲评审"] -->|"fan-in"| MR{"merge_reviews 双 pass 才过"}
+    RQ["review_quality 校对评审(伏笔变更)"] -->|"fan-in"| MR
+    MR -.->|"revise 且全部 fix_scope=style/local"| PD
+    MR -.->|"revise 结构性:rewrite_count+1 ≤3(REWRITE_LIMIT,耗尽 needs_user)"| WD
+    MR -.->|"pass / needs_user"| URC
+
+    URC{{"◉ 中断B:user_review_chapter(自动模式可代签;rewrite_exhausted 强制人工)"}}
+    URC -.->|"revise:计数重置,独立于自动重写"| WD
+    URC -.->|"confirm + 人工确认伏笔变更"| EE
+
+    EE["event_extract 事件抽取"] ==> UC["update_characters 角色卡更新"]
+    EE ==> ER["entity_resolve 实体消歧 ADR-0015"]
+    EE ==> SM["summary 章/阶段摘要"]
+    UC --> FIN["finalize 单事务落库(失败整体回滚)"]
+    ER --> FIN
+    SM --> FIN
+    FIN -.->|"chapters_done &lt; target_chapters"| NC
+    FIN -.->|"达标"| EN((END))
+
+    classDef interrupt fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+    classDef review fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef agent fill:#f0fdf4,stroke:#16a34a,color:#14532d
+    classDef route fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    class CMO,CSO,URC interrupt
+    class RMO,RSO,RDO,RQ,MR review
+    class CO,IC,GMO,SO,WD,PD,EE,UC,ER,SM agent
+    class NC,CS,BC,PC,FIN route
+</pre>
+</div>
+<details>
+<summary>LangGraph 原生导出(draw_mermaid,未标注,ground truth)</summary>
+<pre>
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	coauthor(coauthor)
+	init_characters(init_characters)
+	persist_characters(persist_characters)
+	gen_master_outline(gen_master_outline)
+	review_master_outline(review_master_outline)
+	confirm_master_outline(confirm_master_outline)
+	next_chapter(next_chapter)
+	stage_outline(stage_outline)
+	review_stage_outline(review_stage_outline)
+	confirm_stage_outline(confirm_stage_outline)
+	chapter_slice(chapter_slice)
+	build_context(build_context)
+	write_draft(write_draft)
+	polish_draft(polish_draft)
+	review_draft_outline(review_draft_outline)
+	review_quality(review_quality)
+	merge_reviews(merge_reviews)
+	user_review_chapter(user_review_chapter)
+	event_extract(event_extract)
+	update_characters(update_characters)
+	entity_resolve(entity_resolve)
+	summary(summary)
+	finalize(finalize)
+	__end__([<p>__end__</p>]):::last
+	__start__ -.-> coauthor;
+	__start__ -.-> next_chapter;
+	build_context --> write_draft;
+	chapter_slice --> build_context;
+	coauthor --> init_characters;
+	confirm_master_outline -.-> gen_master_outline;
+	confirm_master_outline -.-> next_chapter;
+	confirm_stage_outline -.-> build_context;
+	confirm_stage_outline -. &nbsp;regen_stage&nbsp; .-> stage_outline;
+	entity_resolve --> finalize;
+	event_extract --> entity_resolve;
+	event_extract --> summary;
+	event_extract --> update_characters;
+	finalize -.-> __end__;
+	finalize -.-> next_chapter;
+	gen_master_outline --> review_master_outline;
+	init_characters --> persist_characters;
+	merge_reviews -. &nbsp;polish&nbsp; .-> polish_draft;
+	merge_reviews -. &nbsp;user_review&nbsp; .-> user_review_chapter;
+	merge_reviews -. &nbsp;rewrite&nbsp; .-> write_draft;
+	next_chapter -.-> chapter_slice;
+	next_chapter -.-> stage_outline;
+	persist_characters --> gen_master_outline;
+	polish_draft --> review_draft_outline;
+	polish_draft --> review_quality;
+	review_draft_outline --> merge_reviews;
+	review_master_outline -. &nbsp;confirm_master&nbsp; .-> confirm_master_outline;
+	review_master_outline -. &nbsp;regen_master&nbsp; .-> gen_master_outline;
+	review_quality --> merge_reviews;
+	review_stage_outline -. &nbsp;confirm_stage&nbsp; .-> confirm_stage_outline;
+	review_stage_outline -. &nbsp;regen_stage&nbsp; .-> stage_outline;
+	stage_outline --> review_stage_outline;
+	summary --> finalize;
+	update_characters --> finalize;
+	user_review_chapter -. &nbsp;finalize&nbsp; .-> event_extract;
+	user_review_chapter -. &nbsp;rewrite_with_feedback&nbsp; .-> write_draft;
+	write_draft --> review_draft_outline;
+	write_draft --> review_quality;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+</pre>
+</details>
+<script>mermaid.initialize({ startOnLoad: true, theme: "neutral", flowchart: { curve: "linear" } });</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+node_modules/
+public/vendor/
+public/graph.json
+public/graph.tmp
+public/assets/
+public/index.html

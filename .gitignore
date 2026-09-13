@@ -20,3 +20,7 @@ dist/
 .idea/
 .vscode/
 .env.example
+
+# LangGraph Studio 运行时产物 / 生成文本导出(不入库)
+.langgraph_api/
+从培训班开始_第1-10章.txt
