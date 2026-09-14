@@ -23,7 +23,7 @@ from app.core.llm.base import LLMResponse, UsageRecord
 from app.core.llm.facade import LLMFacade
 from app.db.database import init_db
 from app.memory.entity import EntityService
-from app.memory.repository import AgentContext, Repository
+from app.memory.repository import AgentContext, Repository, new_id
 from app.memory.retrieval import RetrievalService, encode_embedding
 from app.memory.schemas import ChapterRow, EntityLink, EntityRow, Fact, VisibilityEntry
 from app.observability.usage_log import make_usage_sink
@@ -142,21 +142,30 @@ class Deps:
             self.conn.commit()
             return did
 
-    def take_pending_directives(self, story_id: str) -> list[str]:
-        """取走未消费指令(消费即标记);build_context 调用。"""
+    def peek_pending_directives(self, story_id: str) -> list[dict]:
+        """查看未消费指令(只读;ADR-0024:消费标记延迟到定稿事务内执行)。
+
+        此前"取走即标记"在生成失败/中断/重写时丢失用户指令(已标 consumed
+        却未进定稿);现返回 [{id, content}],由 build_context 注入上下文,
+        commit_finalize 在定稿事务内按 id 批量标记——指令生命周期与章节定稿原子。
+        """
         with self.run_lock:
             rows = self.conn.execute(
                 "SELECT id, content FROM user_directives"
                 " WHERE story_id=? AND consumed_at IS NULL ORDER BY created_at",
                 (story_id,),
             ).fetchall()
-            for r in rows:
-                self.conn.execute(
-                    "UPDATE user_directives SET consumed_at=? WHERE id=?",
-                    (_now(), r["id"]),
-                )
-            self.conn.commit()
-            return [r["content"] for r in rows]
+            return [{"id": r["id"], "content": r["content"]} for r in rows]
+
+    def mark_directives_consumed(self, directive_ids: list[str]) -> None:
+        """定稿事务内标记指令已消费(由 commit_finalize 调用,不单独 commit)。"""
+        if not directive_ids:
+            return
+        marks = ",".join("?" * len(directive_ids))
+        self.conn.execute(
+            f"UPDATE user_directives SET consumed_at=? WHERE id IN ({marks})",
+            [_now(), *directive_ids],
+        )
 
     # ---- 节点辅助 ----
     def supervisor_ctx(self, story_id: str) -> AgentContext:
@@ -405,90 +414,113 @@ class Deps:
             mapping.setdefault(r["alias"], r["id"])
         return mapping
 
-    def persist_characters(self, state: dict) -> list[str]:
-        """共创落库(确认总大纲时):角色卡 + 实体种子(ADR-0015)。
+    def prepare_character_seeds(self, state: dict) -> dict:
+        """共创落库准备阶段(评审 6.8 / ADR-0024,纯计算零 DB 写):
+        解析角色/实体/别名/链接草稿为待写行(预生成 id),embedding 在事务外
+        批量计算(失败降级 None)。与 commit_character_seeds 配对——准备失败
+        在此抛出,调用方(confirm_master_outline)尚未进入事务,零残留。
 
-        角色实体由代码确定性生成(与角色卡同名同文,零对齐风险),entity_id 回写
-        characters——检索链接扩展与别名识别从第一章即生效;势力/地点/物品等种子
-        实体与链接来自共创 LLM 抽取(entity_drafts 暂存,确认前零残留)。
-        实体写走 entity_manager 身份(单写者不变式);embedding 失败降级 None。
+        角色实体由代码确定性生成(与角色卡同名同文,零对齐风险),entity_id
+        回写 character_drafts——检索链接扩展与别名识别从第一章即生效。
         """
         story_id = state["story_id"]
-        ctx = AgentContext("character_manager", story_id)
-        ectx = AgentContext("entity_manager", story_id)
         seeds = state.get("entity_drafts") or {}
         char_aliases = {a.get("name"): (a.get("aliases") or [])
                         for a in seeds.get("character_aliases", [])}
+        chars: list[dict] = []
+        ents: list[dict] = []
+        aliases: list[tuple[str, str]] = []
+        name_to_eid: dict[str, str] = {}
+        ids: list[str] = []
+        # 1) 角色卡 + 角色实体(确定性同名同文)
+        for d in state.get("character_drafts", []):
+            name = d.get("name", "未命名")
+            cid, eid = new_id(), new_id()
+            chars.append({"id": cid, "name": name, "profile": d.get("profile", ""),
+                          "entity_id": eid})
+            ents.append({"id": eid, "type": "character", "name": name,
+                         "content": d.get("profile", "")})
+            d["id"] = cid
+            d["entity_id"] = eid
+            ids.append(cid)
+            name_to_eid[name] = eid
+            for a in char_aliases.get(name, []):
+                aliases.append(((a or "").strip(), eid))
+        # 2) 种子实体(势力/地点/物品/功法/概念)
+        for e in seeds.get("entities", []):
+            name = (e.get("name") or "").strip()
+            if not name or name in name_to_eid:
+                continue
+            eid = new_id()
+            ents.append({"id": eid, "type": e.get("type", "concept"), "name": name,
+                         "content": e.get("content", "")})
+            name_to_eid[name] = eid
+            for a in e.get("aliases", []) or []:
+                aliases.append(((a or "").strip(), eid))
+        # 3) 初始链接(from/to 名字对;解析不了的丢弃)
+        links = [EntityLink(id=new_id(), story_id=story_id,
+                            from_entity=name_to_eid[(l.get("from") or "").strip()],
+                            to_entity=name_to_eid[(l.get("to") or "").strip()],
+                            relation=(l.get("relation") or "")[:120])
+                 for l in seeds.get("links", [])
+                 if (l.get("from") or "").strip() in name_to_eid
+                 and (l.get("to") or "").strip() in name_to_eid]
+        # 4) 种子实体 embedding(消歧向量层;事务外批量,失败降级 None 不阻塞)
+        for e in ents:
+            e["embedding"] = None
+        if self.embed_fn is not None and ents:
+            try:
+                vectors = self.embed_fn(
+                    [f"{e['name']}:{(e['content'] or '')[:200]}" for e in ents])
+                for e, v in zip(ents, vectors):
+                    if v:
+                        e["embedding"] = encode_embedding(v)
+            except Exception:
+                pass
+        return {"story_id": story_id, "chars": chars, "ents": ents,
+                "aliases": aliases, "links": links, "ids": ids}
 
-        def _upsert_alias(alias: str, entity_id: str) -> None:
-            alias = (alias or "").strip()
+    def commit_character_seeds(self, plan: dict, *, commit: bool = True) -> list[str]:
+        """共创落库写入阶段(纯 DB,评审 6.8 / ADR-0024):写角色卡+实体+别名+链接。
+
+        commit=False 时不开自己的事务、不 commit,由调用方事务统一提交
+        (confirm_master_outline 把总大纲与角色卡并入同一事务,中途失败整体
+        回滚——不再出现"大纲已确认但角色卡缺失"的半成品)。身份走 agent_acl
+        校验(character_manager/entity_manager,单写者不变式不变)。
+        """
+        story_id = plan["story_id"]
+        ctx = AgentContext("character_manager", story_id)
+        ectx = AgentContext("entity_manager", story_id)
+        ts = _now()
+        for c in plan["chars"]:
+            self.repo.check_access(ctx, "characters", "write")
+            self.conn.execute(
+                "INSERT INTO characters (id, story_id, name, profile, entity_id,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (c["id"], story_id, c["name"], c["profile"], c["entity_id"], ts, ts))
+        for e in plan["ents"]:
+            self.repo.check_access(ectx, "entities", "write")
+            self.conn.execute(
+                "INSERT INTO entities (id, story_id, type, name, content, embedding,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (e["id"], story_id, e["type"], e["name"], e["content"],
+                 e["embedding"], ts, ts))
+        for alias, eid in plan["aliases"]:
             if alias:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO entity_aliases"
                     " (alias, story_id, entity_id, created_at) VALUES (?,?,?,?)",
-                    (alias, story_id, entity_id, _now()))
-
-        with self.run_lock:
-            name_to_eid: dict[str, str] = {}
-            ids: list[str] = []
-            # 1) 角色卡 + 角色实体(确定性)
-            for d in state.get("character_drafts", []):
-                from app.memory.schemas import CharacterRow
-                name = d.get("name", "未命名")
-                cid = self.repo.upsert_character(ctx, CharacterRow(
-                    id="", story_id="", name=name,
-                    profile=d.get("profile", "")))
-                d["id"] = cid
-                ids.append(cid)
-                eid = self.repo.upsert_entity(ectx, EntityRow(
-                    id="", story_id="", type="character", name=name,
-                    content=d.get("profile", "")))
-                d["entity_id"] = eid
-                name_to_eid[name] = eid
-                self.conn.execute(
-                    "UPDATE characters SET entity_id=?, updated_at=? WHERE id=?",
-                    (eid, _now(), cid))
-                for a in char_aliases.get(name, []):
-                    _upsert_alias(a, eid)
-            # 2) 种子实体(势力/地点/物品/功法/概念)
-            for e in seeds.get("entities", []):
-                name = (e.get("name") or "").strip()
-                if not name or name in name_to_eid:
-                    continue
-                eid = self.repo.upsert_entity(ectx, EntityRow(
-                    id="", story_id="", type=e.get("type", "concept"),
-                    name=name, content=e.get("content", "")))
-                name_to_eid[name] = eid
-                for a in e.get("aliases", []) or []:
-                    _upsert_alias(a, eid)
-            # 3) 初始链接(from/to 名字对;解析不了的丢弃)
-            links = [EntityLink(id="", story_id="",
-                                from_entity=name_to_eid[(l.get("from") or "").strip()],
-                                to_entity=name_to_eid[(l.get("to") or "").strip()],
-                                relation=(l.get("relation") or "")[:120])
-                     for l in seeds.get("links", [])
-                     if (l.get("from") or "").strip() in name_to_eid
-                     and (l.get("to") or "").strip() in name_to_eid]
-            if links:
-                self.repo.add_entity_links(ectx, links)
-            # 4) 种子实体 embedding(消歧向量层;失败降级 None 不阻塞)
-            if self.embed_fn is not None:
-                ents = self.conn.execute(
-                    "SELECT id, name, content FROM entities"
-                    " WHERE story_id=? AND embedding IS NULL", (story_id,)).fetchall()
-                if ents:
-                    try:
-                        vectors = self.embed_fn(
-                            [f"{r['name']}:{(r['content'] or '')[:200]}" for r in ents])
-                        for r, v in zip(ents, vectors):
-                            if v:
-                                self.conn.execute(
-                                    "UPDATE entities SET embedding=? WHERE id=?",
-                                    (encode_embedding(v), r["id"]))
-                    except Exception:
-                        pass
+                    (alias, story_id, eid, ts))
+        if plan["links"]:
+            self.repo.check_access(ectx, "entity_links", "write")
+            self.conn.executemany(
+                "INSERT INTO entity_links (id, story_id, from_entity, to_entity, relation)"
+                " VALUES (?,?,?,?,?)",
+                [(l.id, story_id, l.from_entity, l.to_entity, l.relation)
+                 for l in plan["links"]])
+        if commit:
             self.conn.commit()
-        return ids
+        return plan["ids"]
 
     def log_review(self, state: dict, *, reviewer: str, verdict: dict, round_no: int,
                    forced: bool | None = None) -> None:
@@ -563,6 +595,37 @@ class Deps:
             if row:
                 return row["id"]
         return None
+
+    def _match_open_thread(self, story_id: str, thread_id: str | None,
+                           description: str, *, escalate: bool = False):
+        """定位活跃伏笔(ADR-0025):优先评审回传的 thread_id 精确命中;
+        id 缺失或失配(模型未按契约/清单已被同章其他变更改写)才降级为
+        描述 LIKE 匹配,并在 retrieval_audit 留痕(caller='thread_fallback')
+        便于追查契约失守。escalate=True 附加"未升格且为 short"条件(仅一次)。"""
+        extra = (" AND escalated_chapter IS NULL"
+                 " AND COALESCE(tier,'short')='short'") if escalate else ""
+        if thread_id:
+            row = self.conn.execute(
+                f"SELECT id FROM plot_threads WHERE id=? AND story_id=?"
+                f" AND status='open'{extra}",
+                (thread_id, story_id),
+            ).fetchone()
+            if row:
+                return row
+        row = self.conn.execute(
+            f"SELECT id FROM plot_threads WHERE story_id=? AND status='open'{extra}"
+            " AND description LIKE ? ORDER BY planted_chapter DESC LIMIT 1",
+            (story_id, f"%{description[:12]}%"),
+        ).fetchone()
+        if row:
+            self.conn.execute(
+                "INSERT INTO retrieval_audit (id, story_id, caller, query,"
+                " returned_count, latency_ms, created_at) VALUES (?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, story_id, "thread_fallback",
+                 f"thread_id={thread_id or '(缺失)'} desc={description[:40]}",
+                 1, 0, _now()),
+            )
+        return row
 
     def commit_finalize(self, state: dict) -> str:
         """定稿 DB 事务:章节 + 事实/认知/可见性 + 伏笔 + 摘要,一次提交。
@@ -682,12 +745,10 @@ class Deps:
                          None, "open", tier, t.get("basis", ""), branch, _now(), _now()),
                     )
                 else:
-                    # advance/resolve/drop:按描述匹配最近 open 线
-                    row = self.conn.execute(
-                        "SELECT id FROM plot_threads WHERE story_id=? AND status='open'"
-                        " AND description LIKE ? ORDER BY planted_chapter DESC LIMIT 1",
-                        (story_id, f"%{t.get('description','')[:12]}%"),
-                    ).fetchone()
+                    # advance/resolve/drop:ADR-0025 优先按评审回传的 thread_id
+                    # 精确命中,失配才降级描述 LIKE(留痕 retrieval_audit)
+                    row = self._match_open_thread(story_id, t.get("thread_id"),
+                                                  t.get("description", ""))
                     if row:
                         status = {"advance": "open", "resolve": "resolved", "drop": "dropped"}[action]
                         self.conn.execute(
@@ -700,12 +761,8 @@ class Deps:
             for r in (state.get("thread_review", {}) or {}).get("reviews", []):
                 if r.get("verdict") != "escalate":
                     continue
-                row = self.conn.execute(
-                    "SELECT id FROM plot_threads WHERE story_id=? AND status='open'"
-                    " AND escalated_chapter IS NULL AND COALESCE(tier,'short')='short'"
-                    " AND description LIKE ? ORDER BY planted_chapter DESC LIMIT 1",
-                    (story_id, f"%{r.get('description','')[:12]}%"),
-                ).fetchone()
+                row = self._match_open_thread(story_id, r.get("thread_id"),
+                                              r.get("description", ""), escalate=True)
                 if row:
                     self.conn.execute(
                         "UPDATE plot_threads SET tier='long', escalated_chapter=?,"
@@ -767,6 +824,11 @@ class Deps:
                         "UPDATE entities SET content=?, updated_at=? WHERE id=? AND story_id=?",
                         (u["content"], _now(), u["entity_id"], story_id),
                     )
+            # 8) 用户指令消费(评审 6.12 / ADR-0024):build_context 只 peek 只读,
+            #    消费标记延迟到本定稿事务内——事务回滚则指令仍 pending,
+            #    本章重跑依旧生效,不再"取走即标、失败即丢"
+            self.mark_directives_consumed(
+                (state.get("context_bundle") or {}).get("user_directive_ids") or [])
             self.conn.commit()
         except Exception:
             self.conn.rollback()

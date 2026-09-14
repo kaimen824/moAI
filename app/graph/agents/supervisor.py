@@ -184,6 +184,12 @@ class SummaryNode(BaseAgent):
         if stage_end and chapter_no >= stage_end:
             chapter_summaries = deps.stage_chapter_summaries(
                 story_id, stage_start, upto=chapter_no)
+            # 阶段末章自身的摘要尚未落库(SummaryNode 先于 finalize 执行,评审 6.11):
+            # 把内存中本章摘要显式并入聚合输入,防止阶段摘要漏掉末章
+            chapter_summaries = [
+                (no, text) for no, text in chapter_summaries if no != chapter_no
+            ] + [(chapter_no, summary)]
+            chapter_summaries.sort(key=lambda t: t[0])
             if chapter_summaries:
                 merged = self.ask_text(
                     system=(

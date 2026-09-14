@@ -133,6 +133,9 @@ function InterruptCard({ intr, t, onSend, busy }) {
                     <Checkbox checked={picked.includes(i)}
                       onCheckedChange={c => setPicked(p => c ? [...p, i] : p.filter(x => x !== i))} />
                     {'  '}[{th.action}] {th.description}
+                    {th.thread_id && (
+                      <Text size="1" color="gray"> (定向已登记伏笔 #{th.thread_id.slice(0, 6)})</Text>
+                    )}
                   </Text>
                 ))}
               </Flex>

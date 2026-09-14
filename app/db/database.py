@@ -25,7 +25,7 @@ def _ensure_admin_seed(conn) -> None:
     import logging
     import os
 
-    from app.auth import hash_password
+    from app.core.security import hash_password
 
     row = conn.execute("SELECT COUNT(*) c FROM users").fetchone()
     if row["c"] == 0:

@@ -56,10 +56,19 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
             key=lambda f: f.get("chapter_established") or 0, reverse=True,
         )
         shown, hidden = facts_sorted[:max_facts], facts_sorted[max_facts:]
-        lines = [f"- [ch{f.get('chapter_established', '?')}] {f['content']}" for f in shown]
+        confirmed = [f for f in shown if f.get("status") != "pending_review"]
+        pending = [f for f in shown if f.get("status") == "pending_review"]
+        lines = [f"- [ch{f.get('chapter_established', '?')}] {f['content']}" for f in confirmed]
         if hidden:
             lines.append(f"(另有 {len(hidden)} 条更早的事实已省略,涉及时可自然照应)")
         parts.append(f"[角色已知事实(POV,不得越界;标注发生在第几章)]\n" + "\n".join(lines))
+        if pending:
+            pl = "\n".join(
+                f"- [ch{f.get('chapter_established', '?')}] {f['content']}"
+                for f in pending)
+            parts.append(
+                "[低置信线索(尚未经事实审核确认,只能作为暗线/伏笔素材铺陈, "
+                "严禁作为确定事实或角色确知信息写入正文)]\n" + pl)
     if bundle.get("beliefs"):
         bl = "\n".join(f"- {b['content']}" for b in bundle["beliefs"])
         parts.append(f"[角色认知(可能包含误信)]\n{bl}")

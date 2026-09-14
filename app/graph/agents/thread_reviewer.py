@@ -22,10 +22,11 @@ from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
 _SYSTEM = (
     "你是伏笔账本评审员(独立评审,不参与创作)。严格按 JSON 输出:\n"
-    '{"thread_changes":[{"description":"伏笔描述","action":"plant|advance|resolve|drop",'
+    '{"thread_changes":[{"thread_id":"操作对象id(见下方规则4,plant 留空)",'
+    '"description":"伏笔描述","action":"plant|advance|resolve|drop",'
     '"tier":"short|long","basis":"一句依据"}],\n'
-    '"reviews":[{"description":"超龄伏笔描述","verdict":"collect|escalate|keep",'
-    '"reason":"一句话"}]}\n'
+    '"reviews":[{"thread_id":"超龄清单方括号内的id","description":"超龄伏笔描述",'
+    '"verdict":"collect|escalate|keep","reason":"一句话"}]}\n'
     "无变更时对应数组留空。规则:\n"
     "1. plant 只收'未解悬念钩子'——正文留下的、读者会期待回答的问题。"
     "世界观设定、本章行动目标、已明确交代的背景不入伏笔账本(它们另有归宿);\n"
@@ -34,10 +35,11 @@ _SYSTEM = (
     "长线是承诺,不是免催收标签;\n"
     "3. 活跃容量超限时(见[容量现状]),优先 drop 低价值线或推进回收腾位,"
     "不新增 plant;\n"
-    "4. advance/resolve/drop 按本章正文实际处理填写;description 必须与"
-    "活跃清单中的原描述逐字一致或高度相近(落库按描述匹配);\n"
-    "5. reviews 只针对[超龄待复核]清单:collect=确认应尽快回收;"
-    "escalate=确认应升格 long(每条仅允许一次);keep=维持现状并给理由。\n"
+    "4. advance/resolve/drop 必填 thread_id(从活跃清单每条开头的方括号内"
+    "原样取),description 照抄原描述作留痕;落库优先按 thread_id 精确命中,"
+    "id 缺省才按描述模糊匹配;\n"
+    "5. reviews 只针对[超龄待复核]清单,thread_id 必填:collect=确认应尽快"
+    "回收;escalate=确认应升格 long(每条仅允许一次);keep=维持现状并给理由;\n"
     "6. 宁缺毋滥:证据不足不强行动账本。"
 )
 
@@ -64,8 +66,10 @@ class ThreadReviewNode(BaseAgent):
             planted = t.get("planted_chapter") or 0
             age = chapter_no - planted if planted else 0
             limit = THREAD_LONG_AGE if tier == "long" else THREAD_SHORT_AGE
-            line = (f"- {t['description']}(埋于ch{planted or '?'},tier={tier},"
-                    f"已{age}章" + (",已升格" if t.get("escalated_chapter") else "") + ")")
+            # 每条开头带 id(ADR-0025:评审回传 thread_id,落库精确命中)
+            line = (f"- [{t['id']}] {t['description']}(埋于ch{planted or '?'},"
+                    f"tier={tier},已{age}章"
+                    + (",已升格" if t.get("escalated_chapter") else "") + ")")
             # 复核清单:超龄且未升格(升格过=已用过一次机会,按 long 账龄自然滑出)
             if planted and age > limit and not t.get("escalated_chapter"):
                 overdue.append(line)

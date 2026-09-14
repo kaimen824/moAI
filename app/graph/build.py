@@ -105,25 +105,33 @@ def confirm_master_outline(state: GraphState, deps: Deps) -> dict:
     })
     if decision.get("action") == "revise":
         return {"user_input": decision, "outline_confirmed": False}
+    # 共创产物落库(确认前零残留,ADR-0011):准备阶段(embedding 计算)在
+    # 事务外,失败则根本不进事务;写入阶段与总大纲归档/落库并入单事务
+    # (评审 6.8 / ADR-0024)——中途失败整体回滚,不再出现"大纲已确认但
+    # 角色卡缺失"的半成品,重试即完整重放
+    plan = deps.prepare_character_seeds(state)
     import uuid
     from datetime import datetime, timezone
     with deps.run_lock:
-        deps.repo.conn.execute(
-            "UPDATE outlines SET status='archived' WHERE story_id=? AND status='confirmed'",
-            (state["story_id"],))
-        # 总大纲确认落库(主控写入,带审计;首版)
-        deps.conn.execute(
-            "INSERT OR REPLACE INTO outlines (id, story_id, version_no, content, status, created_at)"
-            " VALUES (?,?,?,?,?,?)",
-            (uuid.uuid4().hex, state["story_id"],
-             (deps.conn.execute("SELECT COUNT(*) c FROM outlines WHERE story_id=?",
-                                (state["story_id"],)).fetchone()["c"] + 1),
-             state["master_outline"], "confirmed",
-             datetime.now(timezone.utc).isoformat(timespec="seconds")))
-        deps.conn.commit()
-    # 角色卡随总大纲确认一起落库(共创产物先暂存 state,确认前不写库——
-    # 用户放弃/重来时零残留;ADR-0011 共创前置的落库时点修正)
-    deps.persist_characters(state)
+        deps.conn.execute("BEGIN")
+        try:
+            deps.conn.execute(
+                "UPDATE outlines SET status='archived' WHERE story_id=? AND status='confirmed'",
+                (state["story_id"],))
+            # 总大纲确认落库(主控写入,带审计;首版)
+            deps.conn.execute(
+                "INSERT OR REPLACE INTO outlines (id, story_id, version_no, content, status, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (uuid.uuid4().hex, state["story_id"],
+                 (deps.conn.execute("SELECT COUNT(*) c FROM outlines WHERE story_id=?",
+                                    (state["story_id"],)).fetchone()["c"] + 1),
+                 state["master_outline"], "confirmed",
+                 datetime.now(timezone.utc).isoformat(timespec="seconds")))
+            deps.commit_character_seeds(plan, commit=False)
+            deps.conn.commit()
+        except Exception:
+            deps.conn.rollback()
+            raise
     return {"user_input": decision, "outline_confirmed": True,
             "chapter_no": 1, "chapters_done": 0}
 
@@ -192,7 +200,8 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         "beliefs": result.beliefs,
         "active_threads": result.active_threads,
         "expanded_entities": result.expanded_entities,
-        "vector_hits": result.vector_hits,     # 长尾召回(POV 同口径过滤)
+        # 长尾召回(ADR-0024 分级硬过滤:信息差事实在检索层滤除,背景事实保留)
+        "vector_hits": result.vector_hits,
     }
     bundle["carryover"] = deps.recent_carryover(state)
     # ADR-0017 信息差与自适应痕迹治理
@@ -214,10 +223,11 @@ def build_context(state: GraphState, deps: Deps) -> dict:
                if i.get("character_id") in present]
     if intents:
         bundle["character_intents"] = intents
-    # 用户指令通道:消费挂起的指示,注入本章上下文(最高优先级)
-    directives = deps.take_pending_directives(state["story_id"])
+    # 用户指令通道:注入挂起指示(最高优先级);消费标记延迟到定稿事务(ADR-0024)
+    directives = deps.peek_pending_directives(state["story_id"])
     if directives:
-        bundle["user_directives"] = directives
+        bundle["user_directives"] = [d["content"] for d in directives]
+        bundle["user_directive_ids"] = [d["id"] for d in directives]
     stats = {
         "present": len(present_ids),
         "pov_facts": len(result.pov_facts),

@@ -108,7 +108,8 @@ class RetrievalService:
                 result.degraded_vector = True
             else:
                 result.vector_hits = self._vector_fallback(
-                    ctx, branch, query_text, exclude=seen_fact_ids, top_k=vector_top_k
+                    ctx, branch, query_text, exclude=seen_fact_ids,
+                    top_k=vector_top_k, pov_character_ids=list(present_character_ids),
                 )
 
         self._audit(ctx, query_text, len(result.pov_facts) + len(result.vector_hits),
@@ -119,30 +120,41 @@ class RetrievalService:
     def _vector_fallback(
         self, ctx: AgentContext, branch: str, query_text: str,
         *, exclude: set[str], top_k: int,
+        pov_character_ids: Sequence[str] | None = None,
     ) -> list[dict]:
         """长尾召回:embedding 相似度补 POV 查表漏掉的旧事实。
 
-        语义(与主路互补):pov_facts 管"角色所知"(可见性过滤);
-        兜底召回"世界客观长尾"(含无 visibility 行的背景/环境事实,
-        叙事素材)。POV 边界由 writer 渲染层区分语义来保障
-        (叙事可用、角色言行不得引用),不在本层过滤。
+        语义(ADR-0024 修订 ADR-0014,分级硬过滤):
+        - 无 visibility 行的客观事实 = 世界背景/环境(ADR-0014 原语义,保留,
+          叙事素材;角色言行不得引用的边界由 writer 渲染层标注);
+        - 有 visibility 行、且知情者不全在当前 POV 集内 = 信息差事实,
+          **本层硬滤除**(不得靠 prompt 约束——这是悬念与全知视角的硬边界)。
+        POV 集缺省(调用方未给)时退化为只滤 rejected(与旧行为一致)。
+        与 world 回放同口径:排除被推翻(有后续版本)与已拒绝的事实。
         """
         try:
             qvec = self._embed_fn([query_text])[0]
         except Exception:
             return []
-        rows = self._repo.conn.execute(
-            # 与 world 回放口径一致:排除被推翻(有后续版本)与已拒绝的事实,
-            # 防止向量召回失效信息
+        pov = [c for c in (pov_character_ids or []) if c]
+        sql = (
             "SELECT f.id, f.type, f.content, f.chapter_established, f.embedding"
             " FROM facts f"
             " WHERE f.story_id=? AND f.branch_id=? AND f.embedding IS NOT NULL"
             "   AND f.status!='rejected'"
             "   AND NOT EXISTS ("
             "     SELECT 1 FROM facts g"
-            "     WHERE g.prev_version_id = f.id AND g.branch_id = f.branch_id)",
-            (ctx.story_id, branch),
-        ).fetchall()
+            "     WHERE g.prev_version_id = f.id AND g.branch_id = f.branch_id)"
+        )
+        params: list = [ctx.story_id, branch]
+        if pov:
+            marks = ",".join("?" * len(pov))
+            # 存在任何"知情者不在当前 POV 集"的可见性行 -> 信息差事实,滤除
+            sql += ("   AND NOT EXISTS ("
+                    "     SELECT 1 FROM fact_visibility fv"
+                    f"    WHERE fv.fact_id = f.id AND fv.character_id NOT IN ({marks}))")
+            params.extend(pov)
+        rows = self._repo.conn.execute(sql, params).fetchall()
         scored: list[tuple[float, dict]] = []
         for r in rows:
             if r["id"] in exclude:

@@ -521,3 +521,43 @@ checkpoint 覆盖/清空首轮事件历史);全局单值 _current_thread 在多 
   流式判断改 deps.has_subscribers(sid)。
 - 附带:run_id 生成于 _sse_run(SSE done 事件携带);空 thread 事件(无
   上下文误 emit)落空串不误归属任何 story。
+
+**ADR-0024 数据正确性口径(生产化批次 3,评审 6.5/6.6/6.8/6.11/6.12)**:
+诊断——POV 记忆不过滤 rejected(人工否决的事实仍进上下文,审核裁决形同
+虚设);vector_hits 全知兜底无信息差边界(ADR-0014 的"无 visibility 行=
+背景"语义被扩大成"任何事实都可兜底命中",角色言行可借向量召回引用他人
+独知信息);用户指令"取走即标"在生成失败/中断/重写时丢失;confirm_master_
+outline 的角色卡落库在大纲提交之后非原子(中途失败留下"大纲已确认但角色
+卡缺失"半成品);阶段末章自身摘要未落库即参与聚合(SummaryNode 先于
+finalize),阶段摘要漏末章。机制:
+- **POV status 口径**:world 回放与 POV 查询统一 `status != 'rejected'`;
+  confirmed 照旧,pending_review 以"低置信线索"语义进入(writer 渲染层
+  显式分节:"只能作为暗线/伏笔素材铺陈,严禁作为确定事实写入正文")。
+  修订 ADR-0014:**分级硬过滤**——vector_hits 只滤"有 visibility 行且
+  知情者不全在当前 POV 集"的信息差事实(硬边界,不靠 prompt);无
+  visibility 行的背景事实保留(叙事素材,writer 渲染层标注言行边界)。
+- **共创单事务**:persist_characters 拆为 prepare_character_seeds(纯计算,
+  embedding 在事务外,失败零残留)+ commit_character_seeds(纯 DB 写,
+  commit=False 沿用外层事务);confirm_master_outline 把大纲归档/落库与
+  角色卡/实体种子并入单事务。附带:embedding 调用移出 run_lock 临界区。
+- **指令延迟消费**:take(取走即标 consumed)改 peek(只读)+ build_context
+  注入 user_directive_ids + commit_finalize 在定稿事务内 mark_consumed——
+  指令生命周期与章节定稿原子,回滚不丢指令。
+- **阶段末章摘要**:SummaryNode 把内存中本章摘要显式并入聚合输入(按章号
+  排序去重),不再依赖"先落库再聚合"的时序假设。
+- 附带修复分层契约:argon2 哈希下沉 app/core/security(db 层管理员种子不再
+  import app.auth——import-linter 实测抓到 db->auth->main->graph 断链)。
+
+**ADR-0025 伏笔 thread_id 全链路(生产化批次 3,评审 6.7)**:诊断——伏笔
+advance/resolve/drop/escalate 落库全靠描述前 12 字 LIKE 匹配最近 open 线,
+近似描述的两条线会串线改错(评分卡"数据正确性"直接扣分项);且匹配失败
+静默跳过,无任何留痕。机制:
+- 评审契约(thread_reviewer)强制回传 thread_id:活跃/超龄清单每条开头
+  方括号内带 id,advance/resolve/drop/reviews 必填,description 照抄留痕;
+  plant 留空(新线 id 落库时生成)。
+- 定稿管道 _match_open_thread:优先 `id=? AND story_id=? AND status='open'`
+  精确命中(escalate 附加"未升格且 short"条件);id 缺失/失配才降级描述
+  LIKE,并在 retrieval_audit 留痕(caller='thread_fallback',query 记缺失
+  id 与描述片段)——契约失守可追查,不再静默。
+- 中断卡(Workbench)对带 thread_id 的变更显示"定向已登记伏笔 #xxxxxx",
+  人工确认环节可见操作对象;确认透传字段原样携带 thread_id。

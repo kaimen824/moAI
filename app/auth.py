@@ -16,30 +16,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_settings
+from app.core.security import hash_password, verify_password   # noqa: F401 (再导出)
 
-_hasher = PasswordHasher()          # argon2id 默认参数
 _bearer = HTTPBearer(auto_error=False)
 
 ADMIN_ROLE = "admin"
-
-
-def hash_password(plain: str) -> str:
-    return _hasher.hash(plain)
-
-
-def verify_password(plain: str, password_hash: str) -> bool:
-    try:
-        return _hasher.verify(password_hash, plain)
-    except VerifyMismatchError:
-        return False
-    except Exception:   # noqa: BLE001 — 哈希格式损坏等,按验证失败处理
-        return False
 
 
 def create_access_token(*, user_id: str, username: str, role: str) -> str:

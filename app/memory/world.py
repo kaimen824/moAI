@@ -11,11 +11,14 @@ import sqlite3
 from app.memory.repository import AgentContext
 from app.memory.schemas import WorldSnapshot
 
-# 事实在该时点仍有效:无"推翻它的更早版本"存在
+# 事实在该时点仍有效:无"推翻它的更早版本"存在,且未被人工审核拒绝(ADR-0024)。
+# status 口径:confirmed(已确认)与 pending_review(低置信待审,以低置信线索语义
+# 进入上下文)均为有效记忆;rejected(人工否决)一律排除——审核裁决即权威。
 _FACT_VALID = """
 SELECT f.* FROM facts f
 WHERE f.story_id = :story_id AND f.branch_id = :branch_id
   AND f.chapter_established <= :upto
+  AND f.status != 'rejected'
   AND NOT EXISTS (
     SELECT 1 FROM facts g
     WHERE g.prev_version_id = f.id AND g.branch_id = f.branch_id
@@ -80,7 +83,11 @@ def get_pov_memory(
     character_id: str,
     upto_chapter: int,
 ) -> dict:
-    """角色 POV 长期记忆(ADR-0003):客观(经可见性过滤)∪ 主观(believed 误信)。"""
+    """角色 POV 长期记忆(ADR-0003):客观(经可见性过滤)∪ 主观(believed 误信)。
+
+    status 过滤(ADR-0024):rejected 一律排除;pending_review 以低置信线索
+    进入(facts 条目自带 confidence 字段,渲染层显式分节标注)。
+    """
     params = {
         "story_id": story_id, "branch_id": branch_id,
         "character_id": character_id, "upto": upto_chapter,
@@ -91,6 +98,7 @@ def get_pov_memory(
           ON v.fact_id = f.id AND v.character_id = :character_id
         WHERE f.story_id = :story_id AND f.branch_id = :branch_id
           AND f.chapter_established <= :upto
+          AND f.status != 'rejected'
           AND (v.learned_chapter IS NULL OR v.learned_chapter <= :upto)
           AND NOT EXISTS (
             SELECT 1 FROM facts g
