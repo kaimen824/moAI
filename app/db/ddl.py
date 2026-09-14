@@ -375,6 +375,31 @@ def _m2_legacy_backfill(conn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_entities_story ON entities(story_id, status)")
 
 
+def _m4_chapter_unique_active(conn) -> None:
+    """v4:同 story 同章号只允许一条 active 章节(ADR-0023,评审 6.2)。
+
+    重复 generate/resume 曾可并发写同章号多条 active;部分唯一索引在落库层
+    硬拒绝(运行互斥之外的第二道闸)。存量库若有历史重复,保留旧行、仅对
+    (story_id, chapter_no, status='active') 组合创建索引前去重:
+    组内保留最新 rowid 一条,其余置 archived(数据不丢,审计可查)。
+    """
+    dupes = conn.execute(
+        "SELECT story_id, chapter_no, COUNT(*) n FROM chapters"
+        " WHERE status='active' GROUP BY story_id, chapter_no HAVING n > 1"
+    ).fetchall()
+    for d in dupes:
+        rows = conn.execute(
+            "SELECT id FROM chapters WHERE story_id=? AND chapter_no=? AND status='active'"
+            " ORDER BY rowid DESC", (d["story_id"], d["chapter_no"])).fetchall()
+        for r in rows[1:]:
+            conn.execute(
+                "UPDATE chapters SET status='archived', updated_at=? WHERE id=?",
+                (_utcnow(), r["id"]))
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_chapters_active_unique"
+        " ON chapters(story_id, chapter_no) WHERE status='active'")
+
+
 def _m3_auth_tenancy(conn) -> None:
     """v3:认证与多租户(ADR-0022)——users / story_members / stories.owner_id。
 
@@ -410,6 +435,7 @@ def _m3_auth_tenancy(conn) -> None:
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
     (3, "auth_tenancy", _m3_auth_tenancy),
+    (4, "chapter_unique_active", _m4_chapter_unique_active),
 ]
 
 

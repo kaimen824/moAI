@@ -118,11 +118,12 @@ class WriterNode(BaseAgent):
     role = AgentRole.WRITER
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
+        sid = state.get("story_id", "")
         # 草稿版本标记:评审回流重写时,前端凭此区分第 N 稿(而非把两稿糊在同一段流里)
         deps.emit("draft_start", {
             "chapter_no": state.get("chapter_no"),
             "round": state.get("rewrite_count", 0) + 1,
-        })
+        }, sid)
         system = (
             "你是长篇网文执笔者。依据上下文写本章正文(2500-4000 字,网文单章体量),要求:\n"
             "1. [角色已知事实]是已经发生过的背景(标注了章号):角色只知道列出的内容,"
@@ -152,14 +153,14 @@ class WriterNode(BaseAgent):
             for token in self.llm.stream(
                 self.role,
                 [ChatMessage("system", system), ChatMessage("user", user)],
-                stage="draft", story_id=state.get("story_id", ""),
+                stage="draft", story_id=sid,
             ):
                 chunks.append(token)
-                deps.emit("token", {"text": token})
+                deps.emit("token", {"text": token}, sid)
             return "".join(chunks)
 
         # SSE 监听时逐 token 流式;否则一次性
-        streaming = any(t == deps._current_thread for t, _q in deps._subscribers)
+        streaming = deps.has_subscribers(sid)
         draft = _stream() if streaming else self.ask_text(
             system, user, stage="draft", story_id=state.get("story_id", ""))
 
@@ -170,7 +171,7 @@ class WriterNode(BaseAgent):
             draft = self.ask_text(system, user, stage="draft",
                                   story_id=state.get("story_id", ""))
             if streaming and draft.strip():
-                deps.emit("token", {"text": draft})
+                deps.emit("token", {"text": draft}, sid)
         if not draft.strip():
             raise RuntimeError(
                 f"写作模型连续两次返回空内容(第{state.get('chapter_no')}章"

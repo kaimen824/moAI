@@ -6,6 +6,7 @@ CLI / API / 测试 复用同一引擎(ADR-0009:图与调用方解耦)。
 
 from __future__ import annotations
 
+import contextvars
 import json
 import queue
 import re
@@ -32,6 +33,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# ---- 运行上下文(ADR-0023)----
+# 每 run 的归属信息(thread_id=story_id, run_id)。_sse_run 的 worker 线程入口
+# set;节点/fan-out 线程(LangGraph 并行节点实测继承 ContextVar)与 LLM 回调
+# 经 emit() 兜底读取——多 story 并发时事件不再串台到"最近启动的 run"。
+run_ctx: contextvars.ContextVar = contextvars.ContextVar("novel_run_ctx", default=None)
+
+
+def current_run() -> tuple[str, str]:
+    """(thread_id, run_id);不在运行上下文中返回空串。"""
+    ctx = run_ctx.get()
+    return ctx if ctx else ("", "")
+
+
 class StopRequested(Exception):
     """用户请求中断(协作式停止):节点入口检查抛出,worker 捕获后发 stopped 事件。
 
@@ -52,7 +66,6 @@ class Deps:
     # SSE 事件总线:按 story(thread)隔离的广播 + 历史(刷新/断线后前端可恢复流程)
     _subscribers: list = field(default_factory=list)   # [(thread_id, queue)]
     _history: list = field(default_factory=list)       # [(kind, data, thread_id)] 全局环形,按 thread 过滤
-    _current_thread: str = ""                          # 单任务串行约束下的当前运行 thread
     # 引擎级可重入互斥:全部 DB 访问(repo 方法 / usage sink / checkpointer / 端点)
     # 各自持锁做短临界区。不全程锁图执行——LangGraph fan-out 节点跑在独立线程。
     run_lock: threading.RLock = field(default_factory=threading.RLock)
@@ -73,8 +86,16 @@ class Deps:
             raise StopRequested(story_id)
 
     def emit(self, kind: str, data: dict, thread_id: str | None = None) -> None:
-        """广播事件(按 thread 订阅者)并留存历史。节点内调用走 _current_thread。"""
-        tid = thread_id or self._current_thread
+        """广播事件(按 thread 订阅者)并留存历史。
+
+        thread_id 缺省时从运行上下文读取(ADR-0023)——多 story 并发时节点内
+        emit 归属各自的 run,不再依赖"最近启动"的全局单值。事件体补 run_id。
+        """
+        ctx = current_run()
+        tid = thread_id or ctx[0]
+        run_id = ctx[1]
+        if isinstance(data, dict) and "run_id" not in data:
+            data = {**data, "run_id": run_id} if run_id else data
         self._history.append((kind, data, tid))
         if len(self._history) > 2000:
             del self._history[: len(self._history) - 2000]
@@ -96,6 +117,10 @@ class Deps:
 
     def unsubscribe(self, q) -> None:
         self._subscribers = [(t, x) for t, x in self._subscribers if x is not q]
+
+    def has_subscribers(self, thread_id: str) -> bool:
+        """该 thread 是否有活跃订阅者(writer 决定流式/一次性下发)。"""
+        return any(t == thread_id for t, _q in self._subscribers)
 
     def snapshot(self, thread_id: str) -> list:
         return [(k, d) for k, d, tid in self._history if tid == thread_id]

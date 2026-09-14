@@ -36,10 +36,11 @@ class PolishDraftNode(BaseAgent):
     role = AgentRole.POLISH
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
+        sid = state.get("story_id", "")
         deps.emit("draft_start", {
             "chapter_no": state.get("chapter_no"),
             "round": state.get("rewrite_count", 0) + 1,
-        })
+        }, sid)
         outline_fb = state.get("outline_review", {}).get("feedback") or ""
         quality_fb = state.get("quality_review", {}).get("feedback") or ""
         ban = "\n".join(f"- {p}" for p in
@@ -54,22 +55,21 @@ class PolishDraftNode(BaseAgent):
             for token in self.llm.stream(
                 self.role,
                 [ChatMessage("system", _SYSTEM), ChatMessage("user", user)],
-                stage="polish", story_id=state.get("story_id", ""),
+                stage="polish", story_id=sid,
             ):
                 chunks.append(token)
-                deps.emit("token", {"text": token})
+                deps.emit("token", {"text": token}, sid)
             return "".join(chunks)
 
-        streaming = any(t == deps._current_thread for t, _q in deps._subscribers)
+        streaming = deps.has_subscribers(sid)
         draft = _stream() if streaming else self.ask_text(
-            _SYSTEM, user, stage="polish", story_id=state.get("story_id", ""))
+            _SYSTEM, user, stage="polish", story_id=sid)
 
         # 空输出防御:与写手同策略——重试一次,仍空显式报错,不把空稿送评审
         if not draft.strip():
-            draft = self.ask_text(_SYSTEM, user, stage="polish",
-                                  story_id=state.get("story_id", ""))
+            draft = self.ask_text(_SYSTEM, user, stage="polish", story_id=sid)
             if streaming and draft.strip():
-                deps.emit("token", {"text": draft})
+                deps.emit("token", {"text": draft}, sid)
         if not draft.strip():
             raise RuntimeError(
                 f"精校模型连续两次返回空内容(第{state.get('chapter_no')}章"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import uuid
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -41,6 +42,7 @@ def locked(fn):
 _engine: tuple[Deps, Any] | None = None
 _graph: Any = None
 _active: set[str] = set()          # 运行中的 thread(= story_id)
+_active_lock = threading.Lock()    # check-then-add 原子性(ADR-0023)
 
 
 def engine() -> tuple[Deps, Any]:
@@ -110,20 +112,30 @@ def _extract_payload(update: dict | None) -> dict:
 
 
 def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
-    """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。"""
+    """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。
+
+    互斥(ADR-0023):同一 story 同时只允许一个 active run——generate/resume
+    双击/并发触发第二个请求 409,不再出现重复章节与事件串台。
+    """
     deps, _ = engine()
-    from app.graph.runtime import StopRequested
+    from app.graph.runtime import StopRequested, current_run, run_ctx
+    with _active_lock:
+        if thread_id in _active:
+            raise HTTPException(409, "story run already active")
+        _active.add(thread_id)
     deps.clear_events(thread_id)        # 新一轮生成:该 thread 历史从零
     deps.clear_stop(thread_id)          # 新一轮运行清除上一轮的中断请求
     q = deps.subscribe(thread_id)
-    deps._current_thread = thread_id    # 节点内 emit(token)归属本 thread
+    run_id = uuid.uuid4().hex
     cfg = {"configurable": {"thread_id": thread_id},
            # 硬兜底:任何未预见的图循环超步数即抛错(单章全流程约 20 步,
            # 200 步 ≈ 8-10 章 + 评审循环余量;业务级循环各有更早的自动转人工)
            "recursion_limit": 200}
-    _active.add(thread_id)
 
     def worker() -> None:
+        # 事件归属(ADR-0023):本 run 的所有节点/fan-out/回调线程经
+        # ContextVar 读取 (thread_id, run_id),不再依赖全局单值
+        run_ctx.set((thread_id, run_id))
         try:
             # 不全程持锁:LangGraph fan-out 节点在独立线程,DB 访问
             # 已在 repo/sink/checkpointer 层与引擎锁互斥
@@ -134,14 +146,15 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
                         deps.emit("interrupt", intr.value, thread_id)
                         return
                     deps.emit("stage", {"node": node, "payload": _extract_payload(update)}, thread_id)
-            deps.emit("done", {"ok": True}, thread_id)
+            deps.emit("done", {"ok": True, "run_id": run_id}, thread_id)
         except StopRequested:
             # 用户中断:断点已由 checkpointer 保留,重新生成即续跑
             deps.emit("stopped", {"message": "已按用户请求中断;重新点「生成」可从断点续跑"}, thread_id)
         except Exception as exc:  # noqa: BLE001
             deps.emit("error", {"message": str(exc)}, thread_id)
         finally:
-            _active.discard(thread_id)
+            with _active_lock:
+                _active.discard(thread_id)
             deps.clear_stop(thread_id)
 
     threading.Thread(target=worker, daemon=True).start()

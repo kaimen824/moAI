@@ -503,3 +503,21 @@ fetch+getReader,header 直接可加);管理员开户制(无自助注册,LLM 成�
 边界:与 Agent ACL(ADR-0006)正交——ACL 管 Agent 对数据域,本 ADR 管
 HTTP 用户之间。默认 admin 密码与 JWT secret 生产部署必须经环境变量覆盖
 (DEPLOY 文档批次 7 落地)。
+
+**ADR-0023 active run 互斥与并发事件归属(生产化批次 2,评审 6.2/6.3)**:
+诊断——_sse_run 无互斥,同 story 双击 generate 启动两个图 run(重复章节/
+checkpoint 覆盖/清空首轮事件历史);全局单值 _current_thread 在多 story
+并发时被覆盖,节点内 emit 串台。机制:
+- **互斥**:main._active 的 check-then-add 持独立锁原子化;第二个 generate/
+  resume 409(story run already active);worker finally 持锁 discard。
+- **数据闸**:chapters 部分唯一索引 (story_id, chapter_no) WHERE
+  status='active'(迁移 v4 chapter_unique_active,存量重复保留最新 active、
+  其余置 archived 不丢数据)——互斥之外的第二道闸。
+- **事件归属**:删 _current_thread 全局单值,改模块级 ContextVar
+  run_ctx[(thread_id, run_id)];worker 线程入口 set,emit() 无显式
+  thread_id 时兜底读取;实测 LangGraph fan-out 节点完整继承 ContextVar
+  (并行节点/LLM 回调各自归属);事件体统一注入 run_id(批次 5 贯通观测表)。
+  writer/polisher 的 token/draft_start emit 显式传 state.story_id(双保险),
+  流式判断改 deps.has_subscribers(sid)。
+- 附带:run_id 生成于 _sse_run(SSE done 事件携带);空 thread 事件(无
+  上下文误 emit)落空串不误归属任何 story。
