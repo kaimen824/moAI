@@ -467,3 +467,16 @@ tier 分类判断给模型侧(语义无规则信号),压力状态机给代码侧
 - 待办:同实体/同地点关联伏笔合并去重;存量中按新口径本不该入册的条目
   (世界观基调/行动目标)是否清洗待所有者裁决;keep 裁决持久化(防同条
   伏笔每章重复复核)。
+**ADR-0021 Schema 迁移版本化(生产化批次 0,评审 6.15)**:诊断——schema
+升级靠 CREATE IF NOT EXISTS + PRAGMA 探测式 ALTER 无版本记录,多环境部署
+无法判位、失败不可知(三方评审 P2)。机制:schema_migrations(version PK,
+name, applied_at);version 1 = SCHEMA_SQL baseline(IF NOT EXISTS 天然幂等,
+存量库重放补缺表),version >= 2 = 增量迁移函数(内部 PRAGMA 探测后 ALTER),
+migrate() 按版本序在单事务内应用,版本记录与 DDL 同事务。实测结论:SQLite
+DDL 事务性使失败版本整体回滚(含 ALTER),半迁移不留半成品,重启自愈;
+探测幂等保留为防御(外部工具半改库)。规则:依赖迁移新增列的索引必须放
+迁移函数内,不得进 SCHEMA_SQL(baseline 重放在存量库上因列缺失而失败,
+test_db 回归注释);迁移函数内禁用 executescript(隐式提交破坏事务边界)。
+ALL_TABLES 22 -> 23。生产化修复(评审/production_fix_plan_20260914.md)
+批次 0;后续 users / story_members / story_run_state / 唯一索引等一律走
+增量版本。
