@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.core.config import AgentRole
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.schemas import FactChanges
 from app.memory.repository import AgentContext
 
 _TYPE_ZH = {
@@ -69,6 +70,7 @@ class EventExtractNode(BaseAgent):
             f"[已知实体清单(去重用,勿重复输出)]\n{known_entities}",
             stage="extract_facts",
             story_id=state.get("story_id", ""),
+            schema=FactChanges,
         )
         # 规范化 + 角色名 -> id 映射(暂存变更集,落库时用)
         name_to_id = deps.character_name_map(state)

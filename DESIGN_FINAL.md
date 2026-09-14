@@ -561,3 +561,32 @@ advance/resolve/drop/escalate 落库全靠描述前 12 字 LIKE 匹配最近 ope
   id 与描述片段)——契约失守可追查,不再静默。
 - 中断卡(Workbench)对带 thread_id 的变更显示"定向已登记伏笔 #xxxxxx",
   人工确认环节可见操作对象;确认透传字段原样携带 thread_id。
+
+**ADR-0026 LLM 输出强契约与弹性(生产化批次 4,评审 6.9/6.10)**:诊断——
+ask_json 只做宽松 JSON 提取,无 schema/枚举校验、无重试、无结构化失败记录,
+模型输出空值/截断/错枚举直接把节点炸穿;provider client 每次调用 new 一个
+(连接池浪费)、无显式 timeout/retries;target_chapters 无上限;token 成本
+无预算闸门——公网多用户下成本不可控。机制:
+- **schema 硬约束**:app/graph/agents/schemas.py 每个 JSON stage 一个
+  Pydantic 模型(12 处调用点全接线);真枚举(verdict/action/tier/decision/
+  confidence/fact type)Literal 硬校验,自由文本给安全缺省。
+- **自纠重试**:ask_json 解析/校验失败时把校验错误回喂模型重试一次
+  (self-correction,行业常规);仍失败抛 LLMFormatError(trace_id +
+  error_code)。实现期裁决:校验通过后返回 model_dump() 的 dict——节点侧
+  保持 dict 协议,12 处调用点不必改对象访问。
+- **失败台账**:迁移 v5 新表 llm_failures(story_id/run_id/stage/node/
+  trace_id/raw_output 截断 4k/error);build._node 包装层统一落痕;SSE
+  error 事件携带 error_code + trace_id 关联归因。
+- **安全降级**:评审类节点捕获 LLMFormatError 后——大纲/质量评审默认
+  revise(宁可误返工,绝不静默 pass);伏笔评审默认零账本动作(不虚构
+  plant/advance);降级裁决照常进 review_results 审计。
+- **parse_json_loose 加固**:首尾截取改 JSONDecoder.raw_decode 扫描第一个
+  完整对象(容忍前后杂文);截断输出抛 JSONDecodeError 走重试/台账归因,
+  不做括号补全式猜测修复。
+- **弹性**:factory 按 provider 缓存 chat/embed client;OpenAI 客户端显式
+  timeout(Settings.llm_timeout_seconds,默认 120s)+ max_retries=3(SDK
+  内置 429/5xx 指数退避);流式 last_usage 改 threading.local——客户端
+  复用后多 story 并发流式 usage 不串台。target_chapters Field(ge=1,le=50)。
+- **预算闸门**:每日 token 预算(UTC 日按 usage_log 聚合),story 级与
+  全局级,环境变量 NOVEL_STORY/GLOBAL_DAILY_TOKEN_BUDGET(0=不限);
+  超限 429 + budget_exceeded,generate 入口前置检查。

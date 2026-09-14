@@ -324,6 +324,19 @@ CREATE TABLE IF NOT EXISTS user_directives (
   consumed_at TEXT,                            -- NULL = 待消费
   created_at  TEXT NOT NULL
 );
+
+-- ========== LLM 输出失败台账(ADR-0026,评审 6.9)==========
+CREATE TABLE IF NOT EXISTS llm_failures (
+  id         TEXT PRIMARY KEY,
+  story_id   TEXT,
+  run_id     TEXT,
+  stage      TEXT,                             -- 调用环节(review_quality/extract_facts...)
+  node       TEXT,                             -- Agent 名(name 类属性)
+  trace_id   TEXT,                             -- 与 SSE error 事件关联
+  raw_output TEXT,                             -- 原始输出(截断 4k,归因用)
+  error      TEXT,                             -- 解析/校验错误摘要
+  created_at TEXT NOT NULL
+);
 """
 
 ALL_TABLES = [
@@ -336,7 +349,7 @@ ALL_TABLES = [
     "entities", "entity_links", "entity_aliases", "entity_merge_proposals",
     "agent_acl",
     "review_results", "usage_log", "agent_traces", "retrieval_audit",
-    "user_directives",
+    "user_directives", "llm_failures",
 ]
 
 BASELINE_VERSION = 1
@@ -431,11 +444,28 @@ def _m3_auth_tenancy(conn) -> None:
             conn.execute("ALTER TABLE stories ADD COLUMN owner_id TEXT")
 
 
+def _m5_llm_failures(conn) -> None:
+    """v5:LLM 输出失败台账(ADR-0026,评审 6.9)——坏 JSON/校验失败落痕。"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS llm_failures (
+          id         TEXT PRIMARY KEY,
+          story_id   TEXT,
+          run_id     TEXT,
+          stage      TEXT,
+          node       TEXT,
+          trace_id   TEXT,
+          raw_output TEXT,
+          error      TEXT,
+          created_at TEXT NOT NULL
+        )""")
+
+
 # (version, name, 执行函数);version 严格递增,migrate() 按序补齐未应用版本。
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
     (3, "auth_tenancy", _m3_auth_tenancy),
     (4, "chapter_unique_active", _m4_chapter_unique_active),
+    (5, "llm_failures", _m5_llm_failures),
 ]
 
 

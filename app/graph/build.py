@@ -19,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.core.config import THREAD_LONG_AGE, THREAD_SHORT_AGE
+from app.graph.agents.base import LLMFormatError
 from app.graph.agents.character_manager import InitCharactersNode, UpdateCharactersNode
 from app.graph.agents.entity_resolver import EntityResolveNode
 from app.graph.agents.event_extractor import EventExtractNode
@@ -83,11 +84,20 @@ def _node(fn: Callable, deps: Deps):
 
     入口统一做协作式停止检查:用户中断置位后,图在下一个节点边界
     抛 StopRequested 安全退出(checkpointer 保留断点,续跑从此恢复)。
+    LLMFormatError(评审类节点自行捕获降级,不落到这里)统一落
+    llm_failures 台账后原样上抛——SSE error 携带 trace_id 关联归因。
     """
     @functools.wraps(fn)
     def wrapped(state: GraphState) -> dict:
-        deps.check_stop(state.get("story_id", ""))
-        return fn(state, deps)
+        story_id = state.get("story_id", "")
+        deps.check_stop(story_id)
+        try:
+            return fn(state, deps)
+        except LLMFormatError as exc:
+            deps.log_llm_failure(story_id=story_id, stage=exc.stage,
+                                 node=getattr(fn, "name", "") or getattr(fn, "__name__", ""),
+                                 exc=exc)
+            raise
     return wrapped
 
 

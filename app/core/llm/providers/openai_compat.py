@@ -1,11 +1,18 @@
-"""OpenAI 兼容客户端族:任何暴露 /chat/completions 与 /embeddings 的服务。"""
+"""OpenAI 兼容客户端族:任何暴露 /chat/completions 与 /embeddings 的服务。
+
+超时与重试显式化(评审 6.10 / ADR-0026):SDK 内置 429/5xx 指数退避
+(max_retries),超时统一取 Settings.llm_timeout_seconds——偶发慢响应不再
+无限挂起生成线程。
+"""
 
 from __future__ import annotations
 
+import threading
 from typing import Iterator, Sequence
 
 from openai import OpenAI
 
+from app.core.config import get_settings
 from app.core.llm.base import (
     ChatClient,
     ChatMessage,
@@ -24,10 +31,20 @@ def _cached_tokens(usage) -> int:
 
 class OpenAICompatChat(ChatClient):
     def __init__(self, api_key: str, base_url: str):
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        settings = get_settings()
+        self._client = OpenAI(
+            api_key=api_key, base_url=base_url,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
         # 最近一次 stream 的精确 usage(prompt, completion, cached);
-        # 单任务串行约束下由 facade 读取埋点(非流式不经过此属性)
-        self.last_usage: tuple[int, int, int] | None = None
+        # 客户端经 factory 缓存复用,以 threading.local 隔离——多 story
+        # 并发流式时各线程读到自己的 usage(非流式不经过此属性)
+        self._usage_local = threading.local()
+
+    @property
+    def last_usage(self) -> tuple[int, int, int] | None:
+        return getattr(self._usage_local, "usage", None)
 
     def chat(
         self,
@@ -77,14 +94,15 @@ class OpenAICompatChat(ChatClient):
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        self.last_usage = None
+        self._usage_local.usage = None
         stream = self._client.chat.completions.create(**kwargs)
         for chunk in stream:
             usage = getattr(chunk, "usage", None)
             if usage is not None:
-                self.last_usage = (getattr(usage, "prompt_tokens", 0) or 0,
-                                   getattr(usage, "completion_tokens", 0) or 0,
-                                   _cached_tokens(usage))
+                self._usage_local.usage = (
+                    getattr(usage, "prompt_tokens", 0) or 0,
+                    getattr(usage, "completion_tokens", 0) or 0,
+                    _cached_tokens(usage))
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 

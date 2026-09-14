@@ -541,6 +541,24 @@ class Deps:
             )
             self.conn.commit()
 
+    def log_llm_failure(self, *, story_id: str, stage: str, node: str,
+                        exc: Exception) -> None:
+        """LLM 输出失败台账(评审 6.9 / ADR-0026):坏 JSON/校验失败截断留痕,
+        trace_id 与 SSE error 事件关联归因。台账写失败不掩盖主错误。"""
+        raw = getattr(exc, "raw_output", "")
+        trace_id = getattr(exc, "trace_id", "")
+        try:
+            with self.run_lock:
+                self.conn.execute(
+                    "INSERT INTO llm_failures (id, story_id, run_id, stage, node,"
+                    " trace_id, raw_output, error, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, story_id or None, current_run()[1] or None,
+                     stage, node, trace_id, (raw or "")[:4000], str(exc)[:500], _now()),
+                )
+                self.conn.commit()
+        except Exception:   # noqa: BLE001 — 台账失败不影响主错误传播
+            pass
+
     # ---- 实体合并提案:人工裁决入口(API 层)----
 
     def resolve_entity_proposal(self, proposal_id: str, action: str) -> dict:

@@ -18,7 +18,8 @@ from app.core.config import (
     THREAD_SHORT_AGE,
     THREAD_SHORT_CAP,
 )
-from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.base import BaseAgent, LLMFormatError, NodeDeps, register_agent
+from app.graph.agents.schemas import ThreadVerdict
 
 _SYSTEM = (
     "你是伏笔账本评审员(独立评审,不参与创作)。严格按 JSON 输出:\n"
@@ -87,8 +88,17 @@ class ThreadReviewNode(BaseAgent):
             f"escalate 每条仅一次)]\n" + ("\n".join(overdue) or "(无)") + "\n\n"
             f"[其余活跃伏笔(含悬置期,悬置只加深不回收)]\n" + ("\n".join(normal) or "(无)")
         )
-        verdict = self.ask_json(
-            _SYSTEM, user, stage="review_threads", story_id=state.get("story_id", ""))
+        try:
+            verdict = self.ask_json(
+                _SYSTEM, user, stage="review_threads",
+                story_id=state.get("story_id", ""), schema=ThreadVerdict)
+        except LLMFormatError as exc:
+            # 安全默认:零账本动作(绝不虚构 plant/advance;ADR-0026),
+            # 失败台账留痕,SSE error 可关联
+            deps.log_llm_failure(story_id=state.get("story_id", ""),
+                                 stage="review_threads", node=self.name, exc=exc)
+            verdict = {"thread_changes": [], "reviews": [],
+                       "degraded": f"评审输出无效(trace={exc.trace_id})"}
         chg = verdict.get("thread_changes", [])
         rev = verdict.get("reviews", [])
         counts = ",".join(

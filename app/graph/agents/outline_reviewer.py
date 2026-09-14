@@ -3,12 +3,35 @@
 三种评审模式共用裁决契约:
   {"verdict": "pass|revise|block", "scores": {"consistency": 0-10, "structure": 0-10},
    "feedback": "..."}
+评审输出无效(重试后仍不过 schema)时安全默认 revise(ADR-0026)——
+评审链路宁可误返工,绝不静默 pass。
 """
 
 from __future__ import annotations
 
 from app.core.config import AgentRole
-from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.base import BaseAgent, LLMFormatError, NodeDeps, register_agent
+from app.graph.agents.schemas import ReviewVerdict
+
+_SAFE_REVISE = {
+    "verdict": "revise", "scores": {}, "fix_scope": "content",
+    "feedback": "评审输出无效(未通过 schema 校验),已安全降级为返工。",
+}
+
+
+def _judge(self: BaseAgent, deps: NodeDeps, *, system: str, user: str,
+           stage: str, state: dict, round_no: int, reviewer: str = "outline") -> dict:
+    """评审裁决公共路径:schema 校验 + 失败台账 + 安全默认 revise。"""
+    try:
+        verdict = self.ask_json(system, user, stage=stage,
+                                story_id=state.get("story_id", ""), schema=ReviewVerdict)
+    except LLMFormatError as exc:
+        deps.log_llm_failure(story_id=state.get("story_id", ""),
+                             stage=stage, node=self.name, exc=exc)
+        verdict = {**_SAFE_REVISE, "feedback": _SAFE_REVISE["feedback"] +
+                   f"(trace={exc.trace_id})"}
+    deps.log_review(state, reviewer=reviewer, verdict=verdict, round_no=round_no)
+    return verdict
 
 _SYSTEM = (
     "你是大纲一致性评审员(独立评审,不参与创作)。严格按 JSON 输出:"
@@ -43,14 +66,11 @@ class ReviewMasterOutline(BaseAgent):
     role = AgentRole.OUTLINE
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
-        verdict = self.ask_json(
-            _SYSTEM,
-            f"[评审对象] 总大纲\n{state.get('master_outline','')}\n\n"
-            f"[基准] 世界观设定\n{state.get('world_settings','')}",
-            stage="review_master_outline",
-            story_id=state.get("story_id", ""),
-        )
-        deps.log_review(state, reviewer="outline", verdict=verdict, round_no=0)
+        verdict = _judge(
+            self, deps, system=_SYSTEM,
+            user=f"[评审对象] 总大纲\n{state.get('master_outline','')}\n\n"
+                 f"[基准] 世界观设定\n{state.get('world_settings','')}",
+            stage="review_master_outline", state=state, round_no=0)
         return {"outline_verdict": verdict}
 
 
@@ -60,17 +80,14 @@ class ReviewStageOutline(BaseAgent):
     role = AgentRole.OUTLINE
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
-        verdict = self.ask_json(
-            _SYSTEM,
-            f"[评审对象] 阶段细纲\n{state.get('stage_outline','')}\n\n"
-            f"[基准] 总大纲\n{state.get('master_outline','')}\n\n"
-            f"[已完成剧情回顾(细纲不得与其中事件重复,重复即 revise)]\n"
-            f"{deps.story_recap(state)}\n\n"
-            f"[已完成]{state.get('chapters_done',0)} 章",
-            stage="review_stage_outline",
-            story_id=state.get("story_id", ""),
-        )
-        deps.log_review(state, reviewer="outline", verdict=verdict, round_no=0)
+        verdict = _judge(
+            self, deps, system=_SYSTEM,
+            user=f"[评审对象] 阶段细纲\n{state.get('stage_outline','')}\n\n"
+                 f"[基准] 总大纲\n{state.get('master_outline','')}\n\n"
+                 f"[已完成剧情回顾(细纲不得与其中事件重复,重复即 revise)]\n"
+                 f"{deps.story_recap(state)}\n\n"
+                 f"[已完成]{state.get('chapters_done',0)} 章",
+            stage="review_stage_outline", state=state, round_no=0)
         return {"outline_verdict": verdict}
 
 
@@ -82,16 +99,13 @@ class ReviewDraftOutline(BaseAgent):
     role = AgentRole.OUTLINE
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
-        verdict = self.ask_json(
-            _SYSTEM.replace('"structure":0-10', '"fidelity":0-10'),
-            f"[评审对象] 本章正文草稿\n{state.get('draft','')}\n\n"
-            f"[基准] 本章要点\n{state.get('chapter_brief','')}\n\n"
-            f"[基准] 总大纲(当前卷)\n{state.get('master_outline','')[:1500]}\n\n"
-            f"[上期衔接(若草稿重演/复述其中已发生事件,判 revise)]\n"
-            f"{deps.recent_carryover(state)}",
-            stage="review_draft_outline",
-            story_id=state.get("story_id", ""),
-        )
-        deps.log_review(state, reviewer="outline", verdict=verdict,
-                        round_no=state.get("rewrite_count", 0) + 1)
+        verdict = _judge(
+            self, deps, system=_SYSTEM.replace('"structure":0-10', '"fidelity":0-10'),
+            user=f"[评审对象] 本章正文草稿\n{state.get('draft','')}\n\n"
+                 f"[基准] 本章要点\n{state.get('chapter_brief','')}\n\n"
+                 f"[基准] 总大纲(当前卷)\n{state.get('master_outline','')[:1500]}\n\n"
+                 f"[上期衔接(若草稿重演/复述其中已发生事件,判 revise)]\n"
+                 f"{deps.recent_carryover(state)}",
+            stage="review_draft_outline", state=state,
+            round_no=state.get("rewrite_count", 0) + 1)
         return {"outline_review": verdict}

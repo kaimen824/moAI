@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.core.config import AgentRole
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.schemas import CapabilityContract, EntityStageUpdate
 
 
 @register_agent
@@ -39,6 +40,7 @@ class CoauthorNode(BaseAgent):
             settings,
             stage="capability_contract",
             story_id=state.get("story_id", ""),
+            schema=CapabilityContract,
         )
         return {"world_settings": settings,
                 "capability_contract": contract.get("capability_contract", "")}
@@ -219,6 +221,7 @@ class SummaryNode(BaseAgent):
                                     for t in touched),
                         stage="entity_stage_update",
                         story_id=story_id,
+                        schema=EntityStageUpdate,
                     )
                     by_name = {t["name"]: t["id"] for t in touched}
                     update["entity_content_updates"] = [

@@ -10,13 +10,14 @@ import json
 import queue
 import threading
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import (AuthUser, create_access_token, get_admin_user,
                       get_current_user, hash_password, require_story,
@@ -68,7 +69,8 @@ class CreateStory(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    target_chapters: int = 1
+    # 上限 50(评审 6.10):一次生成不计成本地铺章是公网成本事故的直通车
+    target_chapters: int = Field(default=1, ge=1, le=50)
     initial_input: str = ""
     tags: list[str] = []              # 题材标签(Dify 式 token):独立单元,可多选
     branch_id: str = ""
@@ -111,6 +113,41 @@ def _extract_payload(update: dict | None) -> dict:
     return out
 
 
+def _check_daily_budget(deps, story_id: str) -> None:
+    """每日 token 预算闸门(评审 6.10 / ADR-0026):story 级与全局级,
+    按 usage_log 的 UTC 日聚合比对配额;超限 429 + 稳定错误码 budget_exceeded。
+    配额 0 = 不限(默认,单机自用);公网部署经环境变量设定。"""
+    settings = get_settings()
+    limits = {
+        "story": (settings.story_daily_token_budget, "本 story 今日 token 预算已用尽"),
+        "global": (settings.global_daily_token_budget, "全站今日 token 预算已用尽"),
+    }
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _spent(scope_story_id: str | None) -> int:
+        if scope_story_id is None:
+            row = deps.conn.execute(
+                "SELECT COALESCE(SUM(COALESCE(tokens_in,0)+COALESCE(tokens_out,0)),0) s"
+                " FROM usage_log WHERE substr(created_at,1,10)=?", (today,)).fetchone()
+        else:
+            row = deps.conn.execute(
+                "SELECT COALESCE(SUM(COALESCE(tokens_in,0)+COALESCE(tokens_out,0)),0) s"
+                " FROM usage_log WHERE story_id=? AND substr(created_at,1,10)=?",
+                (scope_story_id, today)).fetchone()
+        return row["s"] or 0
+
+    for scope, (limit, message) in limits.items():
+        if limit <= 0:
+            continue
+        spent = _spent(None if scope == "global" else story_id)
+        if spent >= limit:
+            raise HTTPException(
+                429, f"{message}(已用 {spent}/{limit};明日重置,"
+                f"或由管理员调高 NOVEL_{'STORY' if scope == 'story' else 'GLOBAL'}"
+                "_DAILY_TOKEN_BUDGET)",
+                headers={"X-Error-Code": "budget_exceeded"})
+
+
 def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
     """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。
 
@@ -151,7 +188,13 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
             # 用户中断:断点已由 checkpointer 保留,重新生成即续跑
             deps.emit("stopped", {"message": "已按用户请求中断;重新点「生成」可从断点续跑"}, thread_id)
         except Exception as exc:  # noqa: BLE001
-            deps.emit("error", {"message": str(exc)}, thread_id)
+            # 稳定错误码 + trace_id(评审 6.9/6.10):LLMFormatError 等自定义
+            # 异常自带 error_code/trace_id;其余归 internal_error
+            payload = {"message": str(exc),
+                       "error_code": getattr(exc, "error_code", "internal_error")}
+            if getattr(exc, "trace_id", None):
+                payload["trace_id"] = exc.trace_id
+            deps.emit("error", payload, thread_id)
         finally:
             with _active_lock:
                 _active.discard(thread_id)
@@ -374,6 +417,7 @@ def generate(story_id: str, req: GenerateRequest,
              user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
     require_story(deps.conn, story_id, user)
+    _check_daily_budget(deps, story_id)
     story = deps.conn.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
     if not story:
         raise HTTPException(404, "story not found")

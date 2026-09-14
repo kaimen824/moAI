@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.core.config import AgentRole
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.schemas import EntityDecisions
 from app.memory.repository import AgentContext
 
 _ADJUDICATE_SYSTEM = (
@@ -67,6 +68,7 @@ class EntityResolveNode(BaseAgent):
                 f"[候选列表]\n" + "\n\n".join(blocks),
                 stage="entity_resolve",
                 story_id=story_id,
+                schema=EntityDecisions,
             )
             # 目标 id 解析:全量清单 ∪ 向量 top-k(top-k 同源自 active 实体)
             id_by_name = {e["name"]: e["id"]

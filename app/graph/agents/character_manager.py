@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.core.config import AgentRole
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.schemas import CharacterChanges, EntitySeeds, InitCharacters
 
 
 @register_agent
@@ -25,6 +26,7 @@ class InitCharactersNode(BaseAgent):
             state.get("world_settings", ""),
             stage="init_characters",
             story_id=state.get("story_id", ""),
+            schema=InitCharacters,
         )
         characters = result.get("characters", [])
         char_names = "、".join(c.get("name", "") for c in characters) or "(无)"
@@ -42,6 +44,7 @@ class InitCharactersNode(BaseAgent):
             f"{state.get('world_settings', '')}\n\n[既有角色(勿重复入 entities)]\n{char_names}",
             stage="init_entities",
             story_id=state.get("story_id", ""),
+            schema=EntitySeeds,
         )
         return {"character_drafts": characters,
                 "entity_drafts": {"entities": seeds.get("entities", []),
@@ -74,6 +77,7 @@ class UpdateCharactersNode(BaseAgent):
             f"[本章新事实]\n{fact_lines}\n\n[本章认知变化]\n{belief_lines}",
             stage="update_characters",
             story_id=state.get("story_id", ""),
+            schema=CharacterChanges,
         )
         name_to_id = deps.character_name_map(state)
         for u in result.get("updates", []):

@@ -29,16 +29,27 @@ class ProviderRegistry:
 
 
 class ProviderFactory:
-    """抽象工厂的入口:按 provider 名取客户端族。"""
+    """抽象工厂的入口:按 provider 名取客户端族。
+
+    客户端按 provider 缓存复用(评审 6.10 / ADR-0026):此前每次调用 new 一个
+    OpenAI 客户端,连接池/预热全部浪费。单任务串行约束下复用安全;流式
+    last_usage 以 threading.local 隔离,多 story 并发不串台。
+    """
 
     def __init__(self, registry: ProviderRegistry):
         self._registry = registry
+        self._chat: dict[str, ChatClient] = {}
+        self._embed: dict[str, EmbedClient] = {}
 
     def chat_client(self, provider: str) -> ChatClient:
-        return self._registry.get(provider).create_chat_client()
+        if provider not in self._chat:
+            self._chat[provider] = self._registry.get(provider).create_chat_client()
+        return self._chat[provider]
 
     def embed_client(self, provider: str) -> EmbedClient:
-        return self._registry.get(provider).create_embed_client()
+        if provider not in self._embed:
+            self._embed[provider] = self._registry.get(provider).create_embed_client()
+        return self._embed[provider]
 
 
 def build_default_factory(glm_api_key: str, dashscope_api_key: str = "") -> ProviderFactory:

@@ -2,12 +2,15 @@
 
 伏笔账本变更(thread_changes)已剥离至伏笔评审(ADR-0020 单独评审);
 此处 foreshadow 维度只评"本章对既有伏笔的处理是否得当",不产账本变更。
+评审输出无效(重试后仍不过 schema)时安全默认 revise(ADR-0026)。
 """
 
 from __future__ import annotations
 
 from app.core.config import AgentRole
-from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
+from app.graph.agents.base import BaseAgent, LLMFormatError, NodeDeps, register_agent
+from app.graph.agents.outline_reviewer import _SAFE_REVISE
+from app.graph.agents.schemas import ReviewVerdict
 
 _SYSTEM = (
     "你是小说质量审校员。严格按 JSON 输出:"
@@ -45,16 +48,20 @@ class QualityReviewNode(BaseAgent):
         threads = "\n".join(f"- {t['description']}({t['status']})"
                             for t in bundle.get("active_threads", []))
         ban = "\n".join(f"- {p}" for p in bundle.get("style_ban", []))
-        review = self.ask_json(
-            _SYSTEM,
-            f"[本章草稿]\n{state.get('draft','')}\n\n"
-            f"[上期衔接(草稿若重演其中已发生事件,一致性记低分)]\n"
-            f"{bundle.get('carryover', '')}\n\n"
-            f"[世界已知事实(校验基准,标注章号)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}"
-            + (f"\n\n[禁用表达(近章高频复现,本章出现即 style 记低分)]\n{ban}" if ban else ""),
-            stage="review_quality",
-            story_id=state.get("story_id", ""),
-        )
+        user = (f"[本章草稿]\n{state.get('draft','')}\n\n"
+                f"[上期衔接(草稿若重演其中已发生事件,一致性记低分)]\n"
+                f"{bundle.get('carryover', '')}\n\n"
+                f"[世界已知事实(校验基准,标注章号)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}"
+                + (f"\n\n[禁用表达(近章高频复现,本章出现即 style 记低分)]\n{ban}" if ban else ""))
+        try:
+            review = self.ask_json(_SYSTEM, user, stage="review_quality",
+                                   story_id=state.get("story_id", ""),
+                                   schema=ReviewVerdict)
+        except LLMFormatError as exc:
+            deps.log_llm_failure(story_id=state.get("story_id", ""),
+                                 stage="review_quality", node=self.name, exc=exc)
+            review = {**_SAFE_REVISE, "fix_scope": "content",
+                      "feedback": f"{_SAFE_REVISE['feedback']}(trace={exc.trace_id})"}
         deps.log_review(state, reviewer="reviewer", verdict=review,
                         round_no=state.get("rewrite_count", 0) + 1)
         return {"quality_review": review}
