@@ -20,6 +20,7 @@ from langgraph.types import interrupt
 
 from app.core.config import THREAD_LONG_AGE, THREAD_SHORT_AGE
 from app.graph.agents.base import LLMFormatError
+from app.graph.runtime import StopRequested
 from app.graph.agents.character_manager import InitCharactersNode, UpdateCharactersNode
 from app.graph.agents.entity_resolver import EntityResolveNode
 from app.graph.agents.event_extractor import EventExtractNode
@@ -86,6 +87,8 @@ def _node(fn: Callable, deps: Deps):
     抛 StopRequested 安全退出(checkpointer 保留断点,续跑从此恢复)。
     LLMFormatError(评审类节点自行捕获降级,不落到这里)统一落
     llm_failures 台账后原样上抛——SSE error 携带 trace_id 关联归因。
+    ADR-0028:其余异常(provider 429/超时、DB 约束等)同样落台账留痕
+    (provider_status_code 取异常自带属性),不因不是"坏 JSON"就失踪。
     """
     @functools.wraps(fn)
     def wrapped(state: GraphState) -> dict:
@@ -95,6 +98,13 @@ def _node(fn: Callable, deps: Deps):
             return fn(state, deps)
         except LLMFormatError as exc:
             deps.log_llm_failure(story_id=story_id, stage=exc.stage,
+                                 node=getattr(fn, "name", "") or getattr(fn, "__name__", ""),
+                                 exc=exc)
+            raise
+        except StopRequested:
+            raise
+        except Exception as exc:  # noqa: BLE001 — 落痕后原样上抛
+            deps.log_llm_failure(story_id=story_id, stage=getattr(exc, "stage", ""),
                                  node=getattr(fn, "name", "") or getattr(fn, "__name__", ""),
                                  exc=exc)
             raise

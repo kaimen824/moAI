@@ -39,11 +39,20 @@ def _now() -> str:
 # 经 emit() 兜底读取——多 story 并发时事件不再串台到"最近启动的 run"。
 run_ctx: contextvars.ContextVar = contextvars.ContextVar("novel_run_ctx", default=None)
 
+# 触发用户(ADR-0028,评审 6.13):usage_log/agent_traces 按 user 归因成本。
+# 与 run_ctx 同机制:worker 入口 set,观测 sink 读取。
+user_ctx: contextvars.ContextVar = contextvars.ContextVar("novel_user_ctx", default="")
+
 
 def current_run() -> tuple[str, str]:
     """(thread_id, run_id);不在运行上下文中返回空串。"""
     ctx = run_ctx.get()
     return ctx if ctx else ("", "")
+
+
+def current_user_id() -> str:
+    """触发用户 id;不在运行上下文(图级直调/定时任务)返回空串。"""
+    return user_ctx.get() or ""
 
 
 class StopRequested(Exception):
@@ -589,13 +598,17 @@ class Deps:
         trace_id 与 SSE error 事件关联归因。台账写失败不掩盖主错误。"""
         raw = getattr(exc, "raw_output", "")
         trace_id = getattr(exc, "trace_id", "")
+        status_code = getattr(exc, "status_code", None)      # provider 异常自带(ADR-0028)
+        retry_count = getattr(exc, "retry_count", None)      # 应用内重试(ask_json 自纠=1)
         try:
             with self.run_lock:
                 self.conn.execute(
                     "INSERT INTO llm_failures (id, story_id, run_id, stage, node,"
-                    " trace_id, raw_output, error, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    " trace_id, raw_output, error, provider_status_code, retry_count,"
+                    " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (uuid.uuid4().hex, story_id or None, current_run()[1] or None,
-                     stage, node, trace_id, (raw or "")[:4000], str(exc)[:500], _now()),
+                     stage, node, trace_id, (raw or "")[:4000], str(exc)[:500],
+                     status_code, retry_count, _now()),
                 )
                 self.conn.commit()
         except Exception:   # noqa: BLE001 — 台账失败不影响主错误传播
@@ -914,16 +927,20 @@ def build_engine(db_path: str | Path, llm: LLMFacade | None = None,
     repo = Repository(conn, lock=deps.run_lock)
     deps.repo = repo
     facade.set_usage_sink(make_usage_sink(
-        conn, deps.run_lock, run_id_provider=lambda: current_run()[1] or None))
+        conn, deps.run_lock,
+        run_id_provider=lambda: current_run()[1] or None,
+        user_id_provider=lambda: current_user_id() or None))
     # 全节点可观测:每次 LLM 调用 -> SSE agent_call 事件(实时)+ agent_traces 落库(回溯)
     def _trace_sink(rec: dict) -> None:
         deps.emit("agent_call", rec)
         with deps.run_lock:
             conn.execute(
-                "INSERT INTO agent_traces (id, story_id, agent, model, stage, input_text,"
-                " output_text, tokens_in, tokens_out, latency_ms, trace_id, run_id, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (uuid.uuid4().hex, rec.get("story_id", ""), rec.get("agent", ""),
+                "INSERT INTO agent_traces (id, story_id, user_id, agent, model, stage,"
+                " input_text, output_text, tokens_in, tokens_out, latency_ms,"
+                " trace_id, run_id, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, rec.get("story_id", ""),
+                 current_user_id() or None, rec.get("agent", ""),
                  rec.get("model", ""), rec.get("stage", ""),
                  "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in rec.get("input", []))[:4000],
                  (rec.get("output", "") or "")[:8000],

@@ -27,15 +27,20 @@ class LLMFormatError(RuntimeError):
 
     携带 trace_id 与 error_code:SSE error 事件透出,便于前端提示与
     llm_failures 台账(原始输出截断留存)关联归因。
+    retry_count:应用内重试次数(自纠=1;ADR-0028 观测口径,SDK 内部
+    退避不暴露故不虚报)。status_code:底层 provider HTTP 状态(如有)。
     """
 
     error_code = "llm_format"
 
-    def __init__(self, *, stage: str, raw: str, error: str):
+    def __init__(self, *, stage: str, raw: str, error: str,
+                 retry_count: int | None = None, status_code: int | None = None):
         self.stage = stage
         self.raw_output = raw
         self.error = error
         self.trace_id = uuid.uuid4().hex
+        self.retry_count = retry_count
+        self.status_code = status_code
         super().__init__(
             f"LLM 输出未通过 schema 校验(stage={stage},trace={self.trace_id}):{error}")
 
@@ -79,7 +84,7 @@ class BaseAgent(ABC):
             except (json.JSONDecodeError, ValidationError) as err:
                 raise LLMFormatError(
                     stage=stage, raw=retry.content or resp.content,
-                    error=str(err)) from err
+                    error=str(err), retry_count=1) from err
 
     def _chat_json(self, messages: list[ChatMessage], stage: str, story_id: str) -> LLMResponse:
         return self.llm.chat(

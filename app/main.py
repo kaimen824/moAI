@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -25,6 +26,8 @@ from app.auth import (AuthUser, create_access_token, get_admin_user,
 from app.core.config import get_settings
 from app.graph.build import build_graph
 from app.graph.runtime import Deps, build_engine
+
+logger = logging.getLogger("novel.agent")
 
 app = FastAPI(title="novel-agent", version="0.1.0")
 
@@ -148,14 +151,14 @@ def _check_daily_budget(deps, story_id: str) -> None:
                 headers={"X-Error-Code": "budget_exceeded"})
 
 
-def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
+def _sse_run(graph_input: Any, thread_id: str, user_id: str = "") -> StreamingResponse:
     """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。
 
     互斥(ADR-0023):同一 story 同时只允许一个 active run——generate/resume
     双击/并发触发第二个请求 409,不再出现重复章节与事件串台。
     """
     deps, _ = engine()
-    from app.graph.runtime import StopRequested, current_run, run_ctx
+    from app.graph.runtime import StopRequested, current_run, run_ctx, user_ctx
     with _active_lock:
         if thread_id in _active:
             raise HTTPException(409, "story run already active")
@@ -171,8 +174,10 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
 
     def worker() -> None:
         # 事件归属(ADR-0023):本 run 的所有节点/fan-out/回调线程经
-        # ContextVar 读取 (thread_id, run_id),不再依赖全局单值
+        # ContextVar 读取 (thread_id, run_id),不再依赖全局单值;
+        # user_ctx(ADR-0028)供 usage/traces 按触发用户归因
         run_ctx.set((thread_id, run_id))
+        user_ctx.set(user_id)
         try:
             # run 状态持久化(ADR-0027,评审 6.4/6.13):启动即落 running,
             # 进程崩溃后由启动收敛/读时兜底复位;interrupt/error 整体清空
@@ -203,10 +208,14 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
             deps.emit("stopped", {"message": "已按用户请求中断;重新点「生成」可从断点续跑"}, thread_id)
             deps.set_run_state(thread_id, status="idle")
         except Exception as exc:  # noqa: BLE001
-            # 稳定错误码 + trace_id(评审 6.9/6.10):LLMFormatError 等自定义
-            # 异常自带 error_code/trace_id;其余归 internal_error
-            payload = {"message": str(exc),
-                       "error_code": getattr(exc, "error_code", "internal_error")}
+            # 结构化错误(ADR-0028,评审 6.13):服务端 logging.exception 留
+            # 全栈诊断;SSE 只发脱敏摘要 + 稳定标识(error_code/run_id/trace_id)
+            logger.exception("run failed story=%s run=%s", thread_id, run_id)
+            payload = {
+                "message": str(exc)[:300],
+                "error_code": getattr(exc, "error_code", "internal_error"),
+                "run_id": run_id,
+            }
             if getattr(exc, "trace_id", None):
                 payload["trace_id"] = exc.trace_id
             deps.emit("error", payload, thread_id)
@@ -394,6 +403,47 @@ def admin_update_user(user_id: str, req: UpdateUserRequest,
     return {"ok": True, "user_id": user_id}
 
 
+@app.get("/admin/stats")
+@locked
+def admin_stats(admin: AuthUser = Depends(get_admin_user)):
+    """运营观测(ADR-0028,评审 6.13):JSON 口径,不引外部 metrics 栈。
+
+    active runs / 等待中断数 / 错误 run 数 / 近 24h LLM 调用与失败率 /
+    token 成本(按日+story+owner)。失败率分母为 usage_log 调用次数,
+    分子为 llm_failures 台账条数。
+    """
+    deps, _ = engine()
+    c = deps.conn
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    calls_24h = c.execute(
+        "SELECT COUNT(*) n FROM usage_log WHERE created_at>=?", (since,)).fetchone()["n"]
+    failures_24h = c.execute(
+        "SELECT COUNT(*) n FROM llm_failures WHERE created_at>=?", (since,)).fetchone()["n"]
+    waiting = c.execute(
+        "SELECT COUNT(*) n FROM story_run_state WHERE status='waiting'").fetchone()["n"]
+    error_runs = c.execute(
+        "SELECT COUNT(*) n FROM story_run_state WHERE error_code IS NOT NULL").fetchone()["n"]
+    cost = c.execute(
+        "SELECT substr(u.created_at,1,10) AS day, u.story_id, s.title, s.owner_id,"
+        " COUNT(*) AS calls, SUM(COALESCE(u.tokens_in,0)) AS tokens_in,"
+        " SUM(COALESCE(u.tokens_out,0)) AS tokens_out"
+        " FROM usage_log u JOIN stories s ON s.id = u.story_id"
+        " GROUP BY day, u.story_id ORDER BY day DESC, tokens_in + tokens_out DESC"
+        " LIMIT 200").fetchall()
+    return {
+        "active_runs": len(_active),
+        "active_story_ids": sorted(_active),
+        "waiting_interruptions": waiting,
+        "error_runs": error_runs,
+        "llm_calls_24h": calls_24h,
+        "llm_failures_24h": failures_24h,
+        "llm_failure_rate_24h": (round(failures_24h / calls_24h, 4)
+                                 if calls_24h else None),
+        "token_cost": [dict(r) for r in cost],
+    }
+
+
 # ================= 路由 =================
 
 @app.post("/stories")
@@ -468,7 +518,7 @@ def generate(story_id: str, req: GenerateRequest,
          "target_chapters": req.target_chapters,
          "auto_mode": req.auto_confirm,
          "initial_input": premise_part + tags_part + req.initial_input},
-        thread_id=story_id,
+        thread_id=story_id, user_id=user.id,
     )
 
 
@@ -481,7 +531,7 @@ def resume(story_id: str, req: ResumeRequest,
     return _sse_run(
         Command(resume={"action": req.action, "feedback": req.feedback,
                         "threads": req.threads}),
-        thread_id=story_id,
+        thread_id=story_id, user_id=user.id,
     )
 
 

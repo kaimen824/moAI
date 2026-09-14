@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS review_results (
 CREATE TABLE IF NOT EXISTS usage_log (
   id          TEXT PRIMARY KEY,
   story_id    TEXT,
+  user_id     TEXT,                            -- 触发用户(ADR-0028,按用户归因成本)
   agent       TEXT NOT NULL,
   model       TEXT NOT NULL,
   tokens_in   INTEGER,
@@ -295,6 +296,7 @@ CREATE TABLE IF NOT EXISTS usage_log (
 CREATE TABLE IF NOT EXISTS agent_traces (      -- 全节点可观测:LLM 输入/输出快照
   id          TEXT PRIMARY KEY,
   story_id    TEXT,
+  user_id     TEXT,                            -- 触发用户(ADR-0028)
   agent       TEXT NOT NULL,
   model       TEXT NOT NULL,
   stage       TEXT,
@@ -338,6 +340,8 @@ CREATE TABLE IF NOT EXISTS llm_failures (
   trace_id   TEXT,                             -- 与 SSE error 事件关联
   raw_output TEXT,                             -- 原始输出(截断 4k,归因用)
   error      TEXT,                             -- 解析/校验错误摘要
+  provider_status_code INTEGER,               -- provider HTTP 状态(异常自带时;ADR-0028)
+  retry_count INTEGER,                        -- 应用内重试次数(ask_json 自纠=1;ADR-0028)
   created_at TEXT NOT NULL
 );
 
@@ -514,6 +518,24 @@ def _m6_run_state(conn) -> None:
     add_column("review_results", "run_id")
 
 
+def _m7_observability(conn) -> None:
+    """v7:观测列补全(ADR-0028,评审 6.13)——usage_log/agent_traces 补
+    user_id(触发用户),llm_failures 补 provider_status_code/retry_count。
+    全新库 baseline 已含全部列,ALTER 探测后跳过。"""
+    def add_column(table: str, col: str, decl: str) -> None:
+        if table not in {r["name"] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}:
+            return   # 表不存在(baseline 已含新列的全新库):跳过
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+    add_column("usage_log", "user_id", "TEXT")
+    add_column("agent_traces", "user_id", "TEXT")
+    add_column("llm_failures", "provider_status_code", "INTEGER")
+    add_column("llm_failures", "retry_count", "INTEGER")
+
+
 # (version, name, 执行函数);version 严格递增,migrate() 按序补齐未应用版本。
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
@@ -521,6 +543,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (4, "chapter_unique_active", _m4_chapter_unique_active),
     (5, "llm_failures", _m5_llm_failures),
     (6, "run_state", _m6_run_state),
+    (7, "observability", _m7_observability),
 ]
 
 

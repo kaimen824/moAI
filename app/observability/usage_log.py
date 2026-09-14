@@ -16,25 +16,28 @@ def _now() -> str:
 
 
 def make_usage_sink(conn: sqlite3.Connection, lock: Optional[threading.RLock] = None,
-                    run_id_provider: Optional[Callable[[], Optional[str]]] = None):
+                    run_id_provider: Optional[Callable[[], Optional[str]]] = None,
+                    user_id_provider: Optional[Callable[[], Optional[str]]] = None):
     """构造写入 usage_log 的 sink;返回闭包供 LLMFacade.set_usage_sink 注入。
 
     lock:引擎级锁——流式调用的埋点在 SSE 消费线程的 generator finally 中执行,
     必须与图线程/端点线程的 DB 访问共用同一把锁,否则 sqlite3 跨线程并发报错。
-    run_id_provider:调用时读取当前 run 标识(ADR-0027)——经注入而非本模块
-    直接依赖 graph 层,保持 observability 独立于执行编排。
+    run_id_provider / user_id_provider:调用时读取当前 run/触发用户(ADR-0027/
+    ADR-0028)——经注入而非本模块直接依赖 graph 层,保持 observability 独立
+    于执行编排。
     """
 
     def sink(record: UsageRecord) -> None:
         def _write() -> None:
             conn.execute(
                 "INSERT INTO usage_log "
-                "(id, story_id, agent, model, tokens_in, tokens_out, cached_tokens,"
-                " latency_ms, trace_id, stage, run_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, story_id, user_id, agent, model, tokens_in, tokens_out,"
+                " cached_tokens, latency_ms, trace_id, stage, run_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     uuid.uuid4().hex,
                     record.story_id or None,
+                    user_id_provider() if user_id_provider is not None else None,
                     record.agent,
                     record.model,
                     record.tokens_in,

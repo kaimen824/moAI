@@ -619,3 +619,25 @@ run_id 只存在于事件流,usage_log/agent_traces/review_results 无归属,事
 - **前端恢复**:Workbench 挂载时 waiting 且事件快照无 interrupt 事件
   (服务重启后 in-memory 快照已失)→ 从 run-state 的持久化 payload 重建
   中断卡——刷新/重启不再丢卡。
+
+**ADR-0028 可观测性补全(生产化批次 6,评审 6.13)**:诊断——四张观测表
+缺 user_id(成本无法按触发用户归因)、llm_failures 缺 provider 状态与重试
+口径;worker 异常裸 str(exc) 直发前端,服务端无全栈日志;运营无全局视图。
+机制:
+- **user_id 贯通**:迁移 v7 给 usage_log/agent_traces 补 user_id;新增
+  user_ctx ContextVar(worker 入口 set,与 run_ctx 同机制,节点/fan-out
+  继承),usage sink 经 user_id_provider 注入读取——observability 不反向
+  依赖 graph,保持分层。
+- **失败台账补列**:llm_failures 加 provider_status_code(异常自带
+  status_code 时记录,如 openai.APIStatusError)/ retry_count(应用内
+  重试口径:ask_json 自纠=1)。数字纪律:SDK 内部退避次数不对外暴露,
+  不虚报。_node 包装层扩展:非坏-JSON 异常(provider 429/超时、DB 约束)
+  同样落台账留痕,StopRequested(用户主动中断)除外。
+- **结构化错误**:worker 异常时服务端 logging.exception 留全栈
+  (logger="novel.agent");SSE error 事件只带 error_code / run_id /
+  trace_id / message(截断 300)——前端拿稳定标识做提示与关联,堆栈
+  只留在服务端日志。
+- **/admin/stats**(admin 专用):active runs、等待中断数、错误 run 数、
+  近 24h LLM 调用数与失败率(分母 usage_log、分子 llm_failures)、
+  token 成本按日+story+owner 聚合(近 200 行)。JSON 口径,不引外部
+  metrics 栈。
