@@ -68,3 +68,19 @@
   阶段末条目滚动摘要 → writer 渲染一跳邻居 + 别名识别 + Codex 实体图谱。
   空转表转正;character_manager 的实体族写权移交新 agent 身份 entity_manager(单写者)。
   测试:tests/test_entity.py(9 用例)+ e2e 实体管道用例,全量 66 绿。
+
+## 复审注记(2026-09-14,生产化批次 0-6)
+
+三方生产落地评审(评审/production_readiness_review_20260913.md,52/100)
+驱动的修复批次,状态变化:
+
+- **已实现(此前评审"未实现/缺失"项)**:schema 版本化迁移(ADR-0021)、
+  JWT 认证与多租户(ADR-0022)、单 active run 互斥 + ContextVar 事件归属
+  (ADR-0023)、伏笔 thread_id 全链路 + 单事务定稿(ADR-0024/0025)、
+  LLM 输出强契约与失败台账(ADR-0026)、run 状态持久化与 run_id 贯通
+  (ADR-0027)、可观测性补全 user_id/错误栈//admin/stats(ADR-0028)。
+- **Landing 宣传修正**:IF 线 cell(#1,仍未实现)已移除,换为已实现的
+  断点续写;POV 泄漏口径从"0%"改为"0/1345 查询层逐条比对"实测口径。
+- **#1 IF 线、#2 章节版本化:维持未实现**,依赖关系不变;对外宣称已与
+  实现对齐。
+- 测试基线:全量 137 passed + import-linter KEPT(批次 0-6 完成,2026-09-14)。

@@ -77,8 +77,8 @@ export default function Landing({ onEnter }) {
             <p>每个事件、每条设定、每个角色的认知都结构化入库,带版本链。第三十章推翻第一章的真相?记下来,且任意时点可回放当时的世界状态。</p>
           </div>
           <div className="l-cell tall texture l-reveal">
-            <h3>IF 线番外</h3>
-            <p>定稿章节可 fork 出一条「如果当时」的平行线,主线不受干扰,番外自由生长。</p>
+            <h3>断点续写</h3>
+            <p>刷新页面、重启服务,进度与中断卡都在。三个关口等你拍板,回来接着定稿,不丢一章。</p>
           </div>
           <div className="l-cell l-reveal">
             <h3>伏笔台账</h3>
@@ -99,8 +99,8 @@ export default function Landing({ onEnter }) {
             <div className="l-ev-cap"><b>远距离事实召回</b>。对照组(最近三章作上下文)为 0%:窗口外的信息对它不存在。</div>
           </div>
           <div className="l-reveal">
-            <div className="l-ev-num">0<small>%</small></div>
-            <div className="l-ev-cap"><b>视角泄漏率</b>。对照组约 65%:把整章原文塞给模型,角色不该知道的信息大量渗入。</div>
+            <div className="l-ev-num">0<small>/1345</small></div>
+            <div className="l-ev-cap"><b>POV 查询层泄漏条数</b>(60 章世界返回逐条比对)。对照组约 65% 条目泄密:把整章原文塞给模型,角色不该知道的信息大量渗入。生成上下文另有分级硬过滤兜底。</div>
           </div>
           <div className="l-reveal">
             <div className="l-ev-num">10-60<small>章</small></div>
