@@ -167,6 +167,48 @@ class Deps:
             [_now(), *directive_ids],
         )
 
+    # ---- 运行状态持久化(ADR-0027,评审 6.4)----
+    def set_run_state(self, story_id: str, *, status: str, run_id: str | None = None,
+                      interrupt_type: str | None = None,
+                      interrupt_payload: str | None = None,
+                      error_code: str | None = None,
+                      error_stage: str | None = None,
+                      target_chapters: int | None = None) -> None:
+        """upsert 运行真相:running(启动)/waiting(中断卡)/idle(终态+错误码)。
+
+        run_id 与 target_chapters 更新时 COALESCE 保留旧值(idle 转换后仍可
+        关联最后一次 run);interrupt 与 error 字段随语义整体覆写。
+        """
+        started = _now() if status == "running" else None
+        with self.run_lock:
+            self.conn.execute(
+                """
+                INSERT INTO story_run_state (story_id, run_id, status, interrupt_type,
+                    interrupt_payload, target_chapters, error_code, error_stage,
+                    started_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(story_id) DO UPDATE SET
+                    run_id=COALESCE(excluded.run_id, story_run_state.run_id),
+                    status=excluded.status,
+                    interrupt_type=excluded.interrupt_type,
+                    interrupt_payload=excluded.interrupt_payload,
+                    target_chapters=COALESCE(excluded.target_chapters,
+                                             story_run_state.target_chapters),
+                    error_code=excluded.error_code,
+                    error_stage=excluded.error_stage,
+                    updated_at=excluded.updated_at
+                """,
+                (story_id, run_id, status, interrupt_type, interrupt_payload,
+                 target_chapters, error_code, error_stage, started, _now()),
+            )
+            self.conn.commit()
+
+    def get_run_state(self, story_id: str) -> dict | None:
+        with self.run_lock:
+            row = self.conn.execute(
+                "SELECT * FROM story_run_state WHERE story_id=?", (story_id,)).fetchone()
+        return dict(row) if row else None
+
     # ---- 节点辅助 ----
     def supervisor_ctx(self, story_id: str) -> AgentContext:
         return AgentContext("supervisor", story_id)
@@ -531,13 +573,13 @@ class Deps:
         with self.run_lock:
             self.conn.execute(
                 "INSERT INTO review_results (id, story_id, chapter_no, round_no, reviewer,"
-                " verdict, scores, feedback, forced_pass, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " verdict, scores, feedback, forced_pass, run_id, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (uuid.uuid4().hex, state.get("story_id", ""), state.get("chapter_no"),
                  round_no, reviewer, verdict.get("verdict", "revise"),
                  json.dumps(verdict.get("scores", {}), ensure_ascii=False),
                  verdict.get("feedback", ""),
-                 1 if forced else 0, _now()),
+                 1 if forced else 0, current_run()[1] or None, _now()),
             )
             self.conn.commit()
 
@@ -871,24 +913,35 @@ def build_engine(db_path: str | Path, llm: LLMFacade | None = None,
     deps = Deps(conn=conn, repo=None, retrieval=None, llm=facade)   # type: ignore[arg-type]
     repo = Repository(conn, lock=deps.run_lock)
     deps.repo = repo
-    facade.set_usage_sink(make_usage_sink(conn, deps.run_lock))
+    facade.set_usage_sink(make_usage_sink(
+        conn, deps.run_lock, run_id_provider=lambda: current_run()[1] or None))
     # 全节点可观测:每次 LLM 调用 -> SSE agent_call 事件(实时)+ agent_traces 落库(回溯)
     def _trace_sink(rec: dict) -> None:
         deps.emit("agent_call", rec)
         with deps.run_lock:
             conn.execute(
                 "INSERT INTO agent_traces (id, story_id, agent, model, stage, input_text,"
-                " output_text, tokens_in, tokens_out, latency_ms, trace_id, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " output_text, tokens_in, tokens_out, latency_ms, trace_id, run_id, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (uuid.uuid4().hex, rec.get("story_id", ""), rec.get("agent", ""),
                  rec.get("model", ""), rec.get("stage", ""),
                  "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in rec.get("input", []))[:4000],
                  (rec.get("output", "") or "")[:8000],
                  rec.get("tokens_in", 0), rec.get("tokens_out", 0),
-                 rec.get("latency_ms", 0), rec.get("trace_id", ""), _now()),
+                 rec.get("latency_ms", 0), rec.get("trace_id", ""),
+                 current_run()[1] or None, _now()),
             )
             conn.commit()
     facade.set_trace_sink(_trace_sink)
+    # 启动收敛(ADR-0027,评审 6.4):进程崩溃残留的 running 收敛为 idle——
+    # 可恢复性由 LangGraph checkpoint(SqliteSaver)保证,重新 generate 即续跑;
+    # waiting 行保留(持久化中断卡仍可还原/resume)
+    stale = conn.execute(
+        "UPDATE story_run_state SET status='idle', interrupt_type=NULL,"
+        " interrupt_payload=NULL, updated_at=? WHERE status='running'",
+        (_now(),)).rowcount
+    if stale:
+        conn.commit()
     from langgraph.checkpoint.sqlite import SqliteSaver
     saver = SqliteSaver(conn)
     saver.lock = deps.run_lock          # saver 内部锁替换为引擎锁:与 repo/sink 互斥

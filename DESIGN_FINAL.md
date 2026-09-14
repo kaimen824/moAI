@@ -590,3 +590,32 @@ ask_json 只做宽松 JSON 提取,无 schema/枚举校验、无重试、无结�
 - **预算闸门**:每日 token 预算(UTC 日按 usage_log 聚合),story 级与
   全局级,环境变量 NOVEL_STORY/GLOBAL_DAILY_TOKEN_BUDGET(0=不限);
   超限 429 + budget_exceeded,generate 入口前置检查。
+
+**ADR-0027 run 状态持久化与 run_id 贯通(生产化批次 5,评审 6.4/6.13)**:
+诊断——运行状态只存进程内(_active 集合 + in-memory 事件快照):进程重启后
+"等待人工确认"的 story 状态归零,前端刷新丢失中断卡,无法判断哪些书在跑;
+run_id 只存在于事件流,usage_log/agent_traces/review_results 无归属,事后
+按轮次归因成本与诊断不可行。机制:
+- **story_run_state 表**(迁移 v6,PK story_id 单行 upsert):status
+  (running/waiting/idle)+ interrupt_type + interrupt_payload(完整 JSON
+  中断卡)+ target_chapters + error_code/error_stage + run_id。
+  Deps.set_run_state 用 ON CONFLICT COALESCE 语义:run_id/target_chapters
+  缺省保留旧值,interrupt/error 字段整体覆写。
+- **写入点在 worker 骨架**:启动→running(清 interrupt/error);__interrupt__
+  →waiting + payload json 落库;done/stopped→idle 清卡;error→idle 带错误码。
+  端点/节点不直接写状态,单一出口便于排查。
+- **读时合并(DB 为主,_active 为辅)**:run-state 端点——DB waiting+在跑
+  →running(resume 竞态窗口);DB running+不在跑→idle(崩溃残留兜底);
+  中断卡数据优先 DB payload(跨重启存活),事件快照兜底。附带修复:done 后
+  事件快照里的旧 interrupt 不再误报 waiting(此前 last_interrupt 扫描无
+  失效语义)。
+- **启动收敛**:build_engine 在 init_db 后把 status='running' 的残留收敛为
+  idle 并清 interrupt——可恢复性由 LangGraph checkpoint(SqliteSaver)保证,
+  重新 generate 即续跑;waiting 行原样保留(用户未裁决的中断卡不丢)。
+- **run_id 贯通**:usage_log/agent_traces/review_results 基线加 run_id 列
+  (迁移 v6 add_column 探测);usage sink 经 run_id_provider 注入读取
+  ContextVar(observability 不反向依赖 graph,保持分层);_trace_sink 与
+  log_review 直接读 current_run()。四表按 run_id 可还原任一轮次的全链路。
+- **前端恢复**:Workbench 挂载时 waiting 且事件快照无 interrupt 事件
+  (服务重启后 in-memory 快照已失)→ 从 run-state 的持久化 payload 重建
+  中断卡——刷新/重启不再丢卡。

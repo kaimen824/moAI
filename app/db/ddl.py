@@ -273,6 +273,7 @@ CREATE TABLE IF NOT EXISTS review_results (
   scores      TEXT,                            -- json:各维度分数
   feedback    TEXT,
   forced_pass INTEGER NOT NULL DEFAULT 0,
+  run_id      TEXT,                            -- 关联 run(ADR-0027)
   created_at  TEXT NOT NULL
 );
 
@@ -286,6 +287,7 @@ CREATE TABLE IF NOT EXISTS usage_log (
   cached_tokens INTEGER NOT NULL DEFAULT 0,    -- prompt 缓存命中 token(命中率=cached/tokens_in)
   latency_ms  INTEGER,
   trace_id    TEXT,
+  run_id      TEXT,                            -- 关联 run(ADR-0027)
   stage       TEXT,                            -- 调用环节(细纲/初稿/评审/抽取/摘要...)
   created_at  TEXT NOT NULL
 );
@@ -302,6 +304,7 @@ CREATE TABLE IF NOT EXISTS agent_traces (      -- 全节点可观测:LLM 输入/
   tokens_out  INTEGER,
   latency_ms  INTEGER,
   trace_id    TEXT,
+  run_id      TEXT,                            -- 关联 run(ADR-0027)
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_traces_story ON agent_traces(story_id, created_at);
@@ -337,6 +340,22 @@ CREATE TABLE IF NOT EXISTS llm_failures (
   error      TEXT,                             -- 解析/校验错误摘要
   created_at TEXT NOT NULL
 );
+
+-- ========== 运行状态持久化(ADR-0027,评审 6.4)==========
+-- 进程内存(_active/事件环形缓冲)之外的唯一运行真相:重启后凭此恢复
+-- 中断卡与状态视图;run_id 与观测表(usage/traces/review/failures)贯通
+CREATE TABLE IF NOT EXISTS story_run_state (
+  story_id          TEXT PRIMARY KEY REFERENCES stories(id),
+  run_id            TEXT,
+  status            TEXT NOT NULL DEFAULT 'idle',  -- running|waiting|idle
+  interrupt_type    TEXT,
+  interrupt_payload TEXT,                          -- 中断卡 JSON(重启后重建视图)
+  target_chapters   INTEGER,
+  error_code        TEXT,
+  error_stage       TEXT,
+  started_at        TEXT,
+  updated_at        TEXT NOT NULL
+);
 """
 
 ALL_TABLES = [
@@ -349,7 +368,7 @@ ALL_TABLES = [
     "entities", "entity_links", "entity_aliases", "entity_merge_proposals",
     "agent_acl",
     "review_results", "usage_log", "agent_traces", "retrieval_audit",
-    "user_directives", "llm_failures",
+    "user_directives", "llm_failures", "story_run_state",
 ]
 
 BASELINE_VERSION = 1
@@ -460,12 +479,48 @@ def _m5_llm_failures(conn) -> None:
         )""")
 
 
+def _m6_run_state(conn) -> None:
+    """v6:运行状态持久化 + run_id 贯通(ADR-0027,评审 6.4/6.13)。
+
+    story_run_state:进程内存之外的唯一运行真相(中断卡持久化);
+    usage_log/agent_traces/review_results 补 run_id 列(llm_failures v5 已带,
+    全新库 baseline 已含全部列,ALTER 探测后跳过)。
+    """
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS story_run_state (
+          story_id          TEXT PRIMARY KEY REFERENCES stories(id),
+          run_id            TEXT,
+          status            TEXT NOT NULL DEFAULT 'idle',
+          interrupt_type    TEXT,
+          interrupt_payload TEXT,
+          target_chapters   INTEGER,
+          error_code        TEXT,
+          error_stage       TEXT,
+          started_at        TEXT,
+          updated_at        TEXT NOT NULL
+        )""")
+
+    def add_column(table: str, col: str) -> None:
+        if table not in tables:
+            return   # 全新建库:baseline 已含新列
+        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+
+    add_column("usage_log", "run_id")
+    add_column("agent_traces", "run_id")
+    add_column("review_results", "run_id")
+
+
 # (version, name, 执行函数);version 严格递增,migrate() 按序补齐未应用版本。
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
     (3, "auth_tenancy", _m3_auth_tenancy),
     (4, "chapter_unique_active", _m4_chapter_unique_active),
     (5, "llm_failures", _m5_llm_failures),
+    (6, "run_state", _m6_run_state),
 ]
 
 

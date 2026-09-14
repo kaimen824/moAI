@@ -174,6 +174,12 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
         # ContextVar 读取 (thread_id, run_id),不再依赖全局单值
         run_ctx.set((thread_id, run_id))
         try:
+            # run 状态持久化(ADR-0027,评审 6.4/6.13):启动即落 running,
+            # 进程崩溃后由启动收敛/读时兜底复位;interrupt/error 整体清空
+            deps.set_run_state(
+                thread_id, status="running", run_id=run_id,
+                target_chapters=graph_input.get("target_chapters")
+                if isinstance(graph_input, dict) else None)
             # 不全程持锁:LangGraph fan-out 节点在独立线程,DB 访问
             # 已在 repo/sink/checkpointer 层与引擎锁互斥
             for chunk in _graph.stream(graph_input, cfg, stream_mode="updates"):
@@ -181,12 +187,21 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
                     if node == "__interrupt__":
                         intr = update[0]
                         deps.emit("interrupt", intr.value, thread_id)
+                        # waiting + 完整 payload 落库:跨重启中断卡可还原(前端不再丢卡)
+                        deps.set_run_state(
+                            thread_id, status="waiting",
+                            interrupt_type=(intr.value.get("type")
+                                            if isinstance(intr.value, dict) else None),
+                            interrupt_payload=json.dumps(
+                                intr.value, ensure_ascii=False, default=str))
                         return
                     deps.emit("stage", {"node": node, "payload": _extract_payload(update)}, thread_id)
             deps.emit("done", {"ok": True, "run_id": run_id}, thread_id)
+            deps.set_run_state(thread_id, status="idle")
         except StopRequested:
             # 用户中断:断点已由 checkpointer 保留,重新生成即续跑
             deps.emit("stopped", {"message": "已按用户请求中断;重新点「生成」可从断点续跑"}, thread_id)
+            deps.set_run_state(thread_id, status="idle")
         except Exception as exc:  # noqa: BLE001
             # 稳定错误码 + trace_id(评审 6.9/6.10):LLMFormatError 等自定义
             # 异常自带 error_code/trace_id;其余归 internal_error
@@ -195,6 +210,9 @@ def _sse_run(graph_input: Any, thread_id: str) -> StreamingResponse:
             if getattr(exc, "trace_id", None):
                 payload["trace_id"] = exc.trace_id
             deps.emit("error", payload, thread_id)
+            deps.set_run_state(thread_id, status="idle",
+                               error_code=str(getattr(exc, "error_code", "internal_error")),
+                               error_stage=str(getattr(exc, "stage", "") or ""))
         finally:
             with _active_lock:
                 _active.discard(thread_id)
@@ -221,18 +239,35 @@ def _sse_response(deps, q) -> StreamingResponse:
 @app.get("/stories/{story_id}/run-state")
 @locked
 def run_state(story_id: str, user: AuthUser = Depends(get_current_user)):
-    """会话恢复:前端挂载时查询 —— 运行中 / 等待中断(含中断卡数据)/ 空闲 + 事件历史。"""
+    """会话恢复:前端挂载时查询 —— 运行中 / 等待中断(含中断卡数据)/ 空闲 + 事件历史。
+
+    状态以 story_run_state(ADR-0027)为准,_active 仅作在跑标记:
+    - DB waiting + 在跑 → running(用户已 resume,worker 尚未覆写完成)
+    - DB running 但不在跑 → idle(崩溃残留读时兜底)
+    中断卡数据优先取 DB payload(跨重启存活),事件快照兜底。
+    """
     deps, _ = engine()
     require_story(deps.conn, story_id, user)
-    events = [{"kind": k, "data": d} for k, d in deps.snapshot(story_id)]
-    last_interrupt = None
-    for k, d in reversed(deps.snapshot(story_id)):
-        if k == "interrupt":
-            last_interrupt = d
-            break
-    status = "running" if story_id in _active else (
-        "waiting" if last_interrupt else "idle")
-    return {"status": status, "interrupt": last_interrupt, "events": events}
+    snap = deps.snapshot(story_id)
+    events = [{"kind": k, "data": d} for k, d in snap]
+    snapshot_interrupt = next(
+        (d for k, d in reversed(snap) if k == "interrupt"), None)
+    row = deps.get_run_state(story_id)
+    active = story_id in _active
+    status = row["status"] if row else (
+        "running" if active else ("waiting" if snapshot_interrupt else "idle"))
+    if row and row["status"] == "waiting" and active:
+        status = "running"
+    elif row and row["status"] == "running" and not active:
+        status = "idle"
+    interrupt = snapshot_interrupt
+    if status == "waiting" and row and row.get("interrupt_payload"):
+        try:
+            interrupt = json.loads(row["interrupt_payload"])
+        except (ValueError, TypeError):
+            pass                # payload 损坏:退回事件快照兜底
+    return {"status": status, "interrupt": interrupt, "events": events,
+            "run_id": row.get("run_id") if row else None}
 
 
 @app.post("/stories/{story_id}/attach")

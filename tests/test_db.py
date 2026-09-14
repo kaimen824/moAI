@@ -13,7 +13,7 @@ def test_init_creates_all_tables(db):
     }
     missing = set(ALL_TABLES) - names
     assert not missing, f"缺表: {missing}"
-    assert len(ALL_TABLES) == 26   # 23(ADR-0021)+users/story_members(ADR-0022)+llm_failures(ADR-0026)
+    assert len(ALL_TABLES) == 27   # 23(ADR-0021)+users/story_members(ADR-0022)+llm_failures(ADR-0026)+story_run_state(ADR-0027)
 
 
 def test_init_is_idempotent(tmp_path):

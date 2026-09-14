@@ -275,6 +275,11 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
       if (rs.status === 'running') {
         setRunning(true); setElapsed(0)
         api.attach(storyId, onEvent).catch(() => {})
+      } else if (rs.status === 'waiting' && rs.interrupt
+                 && !rs.events.some((e) => e.kind === 'interrupt')) {
+        // 服务重启后事件快照已失(in-memory),中断卡从 story_run_state
+        // 的持久化 payload 还原(ADR-0027)——刷新不再丢卡
+        onEvent('interrupt', rs.interrupt)
       }
     })()
     return () => { cancelled = true }
