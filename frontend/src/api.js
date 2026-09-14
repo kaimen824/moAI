@@ -1,10 +1,28 @@
 const BASE = "/api";
+const TOKEN_KEY = "molan-token";
+
+/* ---- 认证(ADR-0022):Bearer token,localStorage 持久 ---- */
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+/** 401 统一处理:清 token 并广播,App 层跳回登录。 */
+function onUnauthorized() {
+  clearToken();
+  window.dispatchEvent(new Event("molan-unauthorized"));
+}
+
+function authHeaders(extra = {}) {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}`, ...extra } : { ...extra };
+}
 
 async function j(path, opts = {}) {
   const r = await fetch(BASE + path, {
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     ...opts,
   });
+  if (r.status === 401) onUnauthorized();
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
@@ -13,9 +31,10 @@ async function j(path, opts = {}) {
 async function sse(path, body, onEvent) {
   const r = await fetch(BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
+  if (r.status === 401) { onUnauthorized(); throw new Error("401 未登录或会话已过期"); }
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   const reader = r.body.getReader();
   const dec = new TextDecoder();
@@ -40,6 +59,21 @@ async function sse(path, body, onEvent) {
 }
 
 export const api = {
+  /* 认证 */
+  login: async (username, password) => {
+    const r = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    const data = await r.json();
+    setToken(data.access_token);
+    return data;
+  },
+  logout: () => clearToken(),
+  me: () => getToken() || "",
+
   createStory: (title, premise) => j("/stories", { method: "POST", body: JSON.stringify({ title, premise }) }),
   listStories: () => j("/stories"),
   storyDetail: (id) => j(`/stories/${id}`),

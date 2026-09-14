@@ -2,8 +2,8 @@
 
 - 全新库:baseline 建全表,增量版本探测后全跳过;
 - 存量库(无版本表):baseline 幂等重放补缺表,增量版本补列,数据保真;
-- 半迁移中断库:版本记录缺失即重跑,探测幂等保证不炸;
-- 迁移失败:单事务回滚,版本记录不写,下次启动自动重试。
+- 迁移中断:DDL 整体回滚(SQLite DDL 事务性),版本记录不写,重启自愈;
+- 断言按 ddl.MIGRATIONS 动态推导,新增版本无需改本文件。
 """
 
 from __future__ import annotations
@@ -14,6 +14,10 @@ import pytest
 
 from app.db import ddl
 from app.db.database import init_db
+
+# 当前应有版本全集:baseline(1) + 已注册增量
+ALL_VERSIONS = [1] + [v for v, _, _ in ddl.MIGRATIONS]
+NAMES = {1: "baseline", **{v: n for v, n, _ in ddl.MIGRATIONS}}
 
 
 def _open(path) -> sqlite3.Connection:
@@ -28,10 +32,10 @@ def _versions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def test_fresh_db_records_baseline_and_migrations(db):
+def test_fresh_db_records_all_versions(db):
     rows = _versions(db)
-    assert [r["version"] for r in rows] == [1, 2]
-    assert rows[0]["name"] == "baseline" and rows[1]["name"] == "legacy_backfill"
+    assert [r["version"] for r in rows] == ALL_VERSIONS
+    assert all(r["name"] == NAMES[r["version"]] for r in rows)
     assert all(r["applied_at"] for r in rows)
 
 
@@ -42,7 +46,7 @@ def test_reinit_is_idempotent(tmp_path):
     second = _versions(init_db(path))
     assert [(r["version"], r["name"]) for r in first] == \
            [(r["version"], r["name"]) for r in second] == \
-           [(1, "baseline"), (2, "legacy_backfill")]
+           [(v, NAMES[v]) for v in ALL_VERSIONS]
 
 
 def test_legacy_db_upgrade_preserves_data(tmp_path):
@@ -65,7 +69,7 @@ def test_legacy_db_upgrade_preserves_data(tmp_path):
 
     conn = init_db(path)
     rows = _versions(conn)
-    assert [r["version"] for r in rows] == [1, 2]   # 存量库标记 baseline 后补增量
+    assert [r["version"] for r in rows] == ALL_VERSIONS   # 存量库标记 baseline 后补齐增量
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(entities)")}
     assert {"chapter_no", "status"} <= cols
     row = conn.execute("SELECT status, chapter_no, name FROM entities WHERE id='e1'").fetchone()
@@ -74,7 +78,7 @@ def test_legacy_db_upgrade_preserves_data(tmp_path):
 
 
 def test_partial_migration_resumes(tmp_path, monkeypatch):
-    """迁移中断:v2 执行到一半崩溃 -> DDL 整体回滚(SQLite DDL 事务性),
+    """迁移中断:增量版本执行到一半崩溃 -> DDL 整体回滚(SQLite DDL 事务性),
     版本记录不写;重跑该版本完整执行(探测幂等兜外部工具半改库的场景)。"""
     path = tmp_path / "half.db"
     # 先造一个 v1 之前的存量老库(entities 缺新列)
@@ -88,7 +92,7 @@ def test_partial_migration_resumes(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    # v2 只补一半就炸:chapter_no 成功,status 失败
+    # 假 v2 只补一半就炸:chapter_no 成功,status 失败
     def _half_v2(conn):
         tables = {r["name"] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -103,7 +107,7 @@ def test_partial_migration_resumes(tmp_path, monkeypatch):
         init_db(path)
 
     conn = _open(path)
-    assert {r["version"] for r in _versions(conn)} == {1}   # v2 记录未写
+    assert {r["version"] for r in _versions(conn)} == {1}   # 失败版本记录未写
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(entities)")}
     assert "chapter_no" not in cols   # 半成品 DDL 已随事务回滚
     conn.close()
@@ -111,7 +115,7 @@ def test_partial_migration_resumes(tmp_path, monkeypatch):
     # 恢复正常迁移重跑:完整执行,两列补齐(自愈)
     monkeypatch.undo()
     conn = init_db(path)
-    assert {r["version"] for r in _versions(conn)} == {1, 2}
+    assert {r["version"] for r in _versions(conn)} == set(ALL_VERSIONS)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(entities)")}
     assert {"chapter_no", "status"} <= cols
     conn.close()
@@ -119,41 +123,44 @@ def test_partial_migration_resumes(tmp_path, monkeypatch):
 
 def test_failed_migration_rolls_back(tmp_path, monkeypatch):
     """迁移失败:该版本单事务回滚、版本记录不写;修复后同库继续升级(自愈)。"""
-    def _broken_v3(conn):
+    def _broken_top(conn):
         conn.execute("CREATE TABLE tmp_rollback_probe (id INTEGER)")   # 应被回滚
         conn.execute("THIS IS NOT SQL")   # 必炸
 
-    real_m2 = (2, "legacy_backfill", ddl._m2_legacy_backfill)
-    monkeypatch.setattr(ddl, "MIGRATIONS", [real_m2, (3, "broken", _broken_v3)])
+    top = ddl.MIGRATIONS[-1][0]                       # 最高版本号
+    prefix = [(v, n, f) for v, n, f in ddl.MIGRATIONS[:-1]]
+    monkeypatch.setattr(ddl, "MIGRATIONS", prefix + [(top, "broken", _broken_top)])
     path = tmp_path / "boom.db"
     with pytest.raises(Exception):
         init_db(path)
 
     conn = _open(path)
     versions = {r["version"] for r in _versions(conn)}
-    assert versions == {1, 2}   # v3 记录未写
+    assert versions == set(ALL_VERSIONS) - {top}   # 失败版本记录未写
     probe = conn.execute(
         "SELECT name FROM sqlite_master WHERE name='tmp_rollback_probe'").fetchone()
     assert probe is None   # 事务内半成品被回滚
     conn.close()
 
-    # 发布修复版 v3 后重跑:同库补上该版本(自愈)
-    monkeypatch.setattr(ddl, "MIGRATIONS", [real_m2, (3, "fixed", lambda c: None)])
+    # 发布修复版后重跑:同库补上该版本(自愈)
+    monkeypatch.setattr(ddl, "MIGRATIONS",
+                        prefix + [(top, "fixed", lambda c: None)])
     conn = init_db(path)
-    assert {r["version"] for r in _versions(conn)} == {1, 2, 3}
+    assert {r["version"] for r in _versions(conn)} == set(ALL_VERSIONS)
     conn.close()
 
 
 def test_future_migration_applies_on_existing_db(db, monkeypatch):
     """已升级的库注册新版本 -> 只跑新版本(增量语义)。"""
+    nxt = max(ALL_VERSIONS) + 1
 
-    def _v4(conn):
-        conn.execute("ALTER TABLE stories ADD COLUMN _probe_v4 INTEGER")
+    def _probe(conn):
+        conn.execute(f"ALTER TABLE stories ADD COLUMN _probe_v{nxt} INTEGER")
 
-    monkeypatch.setattr(ddl, "MIGRATIONS",
-                        [(2, "legacy_backfill", ddl._m2_legacy_backfill),
-                         (4, "probe_v4", _v4)])
+    monkeypatch.setattr(
+        ddl, "MIGRATIONS",
+        list(ddl.MIGRATIONS) + [(nxt, f"probe_v{nxt}", _probe)])
     ddl.migrate(db)   # 已初始化的库上重跑:只补新版本(等价重启升级)
     applied = {r["version"]: r["name"] for r in _versions(db)}
-    assert applied[2] == "legacy_backfill" and applied[4] == "probe_v4"
-    assert {r["name"] for r in db.execute("PRAGMA table_info(stories)")} >= {"_probe_v4"}
+    assert applied[nxt] == f"probe_v{nxt}"
+    assert {r["name"] for r in db.execute("PRAGMA table_info(stories)")} >= {f"_probe_v{nxt}"}

@@ -480,3 +480,26 @@ test_db 回归注释);迁移函数内禁用 executescript(隐式提交破坏事�
 ALL_TABLES 22 -> 23。生产化修复(评审/production_fix_plan_20260914.md)
 批次 0;后续 users / story_members / story_run_state / 唯一索引等一律走
 增量版本。
+
+**ADR-0022 认证与多租户边界(生产化批次 1,评审 6.1 P0)**:诊断——API 无
+认证/授权/租户隔离,任何人可读任意故事、审任意事实、改全局模型配置(三方
+评审 P0)。所有者裁决(2026-09-14):公网多用户;JWT Bearer(SSE 已是
+fetch+getReader,header 直接可加);管理员开户制(无自助注册,LLM 成本不可刷)。
+机制:
+- **凭据**:argon2id 哈希;POST /auth/login 签发 HS256 JWT(默认 2h,
+  NOVEL_JWT_SECRET 环境变量,默认 dev 值仅限本机);自助改密 + admin 重置。
+- **租户模型**:users(id/username UNIQUE/argon2 hash/role admin|user/status
+  active|disabled);stories.owner_id;story_members(story_id,user_id,role
+  owner|editor|viewer,PK 复合)——单人多书 owner 即够,协作预留。
+- **收口**:story 级端点 get_current_user + require_story(越权 404 不泄露
+  存在性);审核队列(facts/entities)按 visible_story_ids 过滤 + 审核动作
+  复核归属;config/models 与 /admin/* admin 专用(全局配置语义);create_story
+  原子写 owner + membership。
+- **撤销语义**:短有效期 + 每请求校验 users.status,禁用即时生效,不引黑名单表。
+- **种子**:users 空时建初始 admin(NOVEL_ADMIN_USER/PASSWORD,默认
+  admin/admin123 打 warning);存量 story owner 回填给首个 admin + 补 membership。
+- 迁移 v3 auth_tenancy(ADR-0021 机制首个消费者);ALL_TABLES 23 -> 25;
+  前端 api.js 自动带 Authorization + 401 广播踢回登录页 + 登录/退出 UI。
+边界:与 Agent ACL(ADR-0006)正交——ACL 管 Agent 对数据域,本 ADR 管
+HTTP 用户之间。默认 admin 密码与 JWT secret 生产部署必须经环境变量覆盖
+(DEPLOY 文档批次 7 落地)。

@@ -30,6 +30,25 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at  TEXT NOT NULL
 );
 
+-- ========== 认证与多租户(ADR-0022)==========
+
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  username      TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'user',     -- admin|user
+  status        TEXT NOT NULL DEFAULT 'active',   -- active|disabled
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS story_members (
+  story_id   TEXT NOT NULL REFERENCES stories(id),
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  role       TEXT NOT NULL DEFAULT 'owner',       -- owner|editor|viewer
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (story_id, user_id)
+);
+
 -- ========== 基础(实现期补充的载体表)==========
 
 CREATE TABLE IF NOT EXISTS stories (
@@ -38,6 +57,7 @@ CREATE TABLE IF NOT EXISTS stories (
   premise     TEXT,
   status      TEXT NOT NULL DEFAULT 'draft',   -- draft|creating|active|completed
   main_branch_id TEXT,
+  owner_id    TEXT,                            -- 所有者(ADR-0022;存量回填给 admin)
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -308,6 +328,7 @@ CREATE TABLE IF NOT EXISTS user_directives (
 
 ALL_TABLES = [
     "schema_migrations",
+    "users", "story_members",
     "stories", "outlines", "branches",
     "facts", "beliefs", "fact_visibility",
     "characters", "chapters", "paragraphs", "chapter_summaries",
@@ -354,9 +375,41 @@ def _m2_legacy_backfill(conn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_entities_story ON entities(story_id, status)")
 
 
+def _m3_auth_tenancy(conn) -> None:
+    """v3:认证与多租户(ADR-0022)——users / story_members / stories.owner_id。
+
+    存量 story 的 owner 回填在应用层 seed 阶段执行(_ensure_admin_seed):
+    迁移阶段 users 表尚无管理员账户,且 admin 初始凭据来自环境变量。
+    """
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+          id            TEXT PRIMARY KEY,
+          username      TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          role          TEXT NOT NULL DEFAULT 'user',     -- admin|user
+          status        TEXT NOT NULL DEFAULT 'active',   -- active|disabled
+          created_at    TEXT NOT NULL
+        )""")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS story_members (
+          story_id   TEXT NOT NULL REFERENCES stories(id),
+          user_id    TEXT NOT NULL REFERENCES users(id),
+          role       TEXT NOT NULL DEFAULT 'owner',       -- owner|editor|viewer
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (story_id, user_id)
+        )""")
+    if "stories" in tables:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(stories)")}
+        if "owner_id" not in cols:
+            conn.execute("ALTER TABLE stories ADD COLUMN owner_id TEXT")
+
+
 # (version, name, 执行函数);version 严格递增,migrate() 按序补齐未应用版本。
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
+    (3, "auth_tenancy", _m3_auth_tenancy),
 ]
 
 

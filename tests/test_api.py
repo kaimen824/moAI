@@ -1,4 +1,8 @@
-"""P4 验收:HTTP 驱动完整流程,SSE 实时事件,抽检队列,用量统计。"""
+"""P4 验收:HTTP 驱动完整流程,SSE 实时事件,抽检队列,用量统计。
+
+认证(ADR-0022):client fixture 以默认管理员(admin/admin123)登录并注入
+Bearer token——全部请求自动携带;越权/未认证矩阵见 test_auth.py。
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,15 @@ from app.core.llm.facade import LLMFacade
 from app.graph.build import build_graph
 from app.graph.runtime import build_engine
 
+ADMIN = {"username": "admin", "password": "admin123"}   # 与 _ensure_admin_seed 默认一致
+
+
+def login(client: TestClient, username: str = ADMIN["username"],
+          password: str = ADMIN["password"]) -> str:
+    r = client.post("/auth/login", json={"username": username, "password": password})
+    assert r.status_code == 200, f"login failed: {r.text}"
+    return r.json()["access_token"]
+
 
 @pytest.fixture()
 def client(tmp_path):
@@ -22,6 +35,7 @@ def client(tmp_path):
     deps, conn = build_engine(tmp_path / "api.db", llm=facade)
     main.install_engine(deps, conn, build_graph(deps, checkpointer=deps.checkpointer))
     with TestClient(main.app) as c:
+        c.headers.update({"Authorization": f"Bearer {login(c)}"})
         yield c, deps
     main._engine, main._graph = None, None
 

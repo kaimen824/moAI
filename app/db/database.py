@@ -3,10 +3,52 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.db.ddl import migrate
 from app.db.seed import build_seed
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ensure_admin_seed(conn) -> None:
+    """管理员账户种子 + 存量 story 归属回填(ADR-0022)。
+
+    users 表为空时按环境变量创建初始管理员(NOVEL_ADMIN_USER / NOVEL_ADMIN_PASSWORD,
+    默认 admin/admin123——生产部署必须通过环境变量覆盖);owner_id 为空的存量
+    story 回填给首个管理员(单机时代的书都归管理员,协作归属后续人工调整)。
+    """
+    import logging
+    import os
+
+    from app.auth import hash_password
+
+    row = conn.execute("SELECT COUNT(*) c FROM users").fetchone()
+    if row["c"] == 0:
+        username = os.environ.get("NOVEL_ADMIN_USER", "admin")
+        password = os.environ.get("NOVEL_ADMIN_PASSWORD", "admin123")
+        if password == "admin123":
+            logging.getLogger(__name__).warning(
+                "使用默认管理员密码;公网部署必须设置 NOVEL_ADMIN_PASSWORD")
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, role, status, created_at)"
+            " VALUES (?, ?, ?, 'admin', 'active', ?)",
+            (uuid.uuid4().hex, username, hash_password(password), _utcnow()))
+    # 存量 story 归属回填(幂等:只补 NULL)
+    admin = conn.execute(
+        "SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").fetchone()
+    if admin:
+        conn.execute(
+            "UPDATE stories SET owner_id=? WHERE owner_id IS NULL", (admin["id"],))
+        conn.execute(
+            "INSERT OR IGNORE INTO story_members (story_id, user_id, role, created_at)"
+            " SELECT id, ?, 'owner', ? FROM stories WHERE owner_id=?",
+            (admin["id"], _utcnow(), admin["id"]))
+    conn.commit()
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -24,7 +66,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: str | Path, *, seed_acl: bool = True) -> sqlite3.Connection:
-    """初始化数据库:按版本补齐 schema(ADR-0021)+ (可选)写入 agent_acl 种子。幂等。"""
+    """初始化数据库:按版本补齐 schema(ADR-0021)+ 种子(acl 与管理员,ADR-0022)。幂等。"""
     conn = connect(db_path)
     migrate(conn)   # baseline 重放 + 增量版本(含首次建全表)
     if seed_acl:
@@ -33,5 +75,5 @@ def init_db(db_path: str | Path, *, seed_acl: bool = True) -> sqlite3.Connection
             "VALUES (?, ?, ?, ?)",
             build_seed(),
         )
-    conn.commit()
+        _ensure_admin_seed(conn)
     return conn

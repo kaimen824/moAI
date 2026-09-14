@@ -304,19 +304,26 @@ class Repository:
         )]
 
     # ================= 基础:story / branch =================
-    def create_story(self, title: str, premise: str = "") -> tuple[str, str]:
-        """建 story + 主线分支。返回 (story_id, main_branch_id)。"""
+    def create_story(self, title: str, premise: str = "",
+                     owner_id: str | None = None) -> tuple[str, str]:
+        """建 story + 主线分支(+ 归属,ADR-0022)。返回 (story_id, main_branch_id)。"""
         story_id, branch_id = new_id(), new_id()
         ts = now_iso()
         self.conn.execute(
-            "INSERT INTO stories (id, title, premise, status, main_branch_id, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (story_id, title, premise, "draft", branch_id, ts, ts),
+            "INSERT INTO stories (id, title, premise, status, main_branch_id, owner_id,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (story_id, title, premise, "draft", branch_id, owner_id, ts, ts),
         )
         self.conn.execute(
             "INSERT INTO branches (id, story_id, kind, status, created_at) VALUES (?,?,?,?,?)",
             (branch_id, story_id, "main", "active", ts),
         )
+        if owner_id:
+            self.conn.execute(
+                "INSERT INTO story_members (story_id, user_id, role, created_at)"
+                " VALUES (?,?, 'owner', ?)",
+                (story_id, owner_id, ts),
+            )
         self.conn.commit()
         return story_id, branch_id
 

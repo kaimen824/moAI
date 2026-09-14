@@ -11,12 +11,15 @@ import queue
 import threading
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 from pydantic import BaseModel
 
+from app.auth import (AuthUser, create_access_token, get_admin_user,
+                      get_current_user, hash_password, require_story,
+                      story_role, verify_password, visible_story_ids)
 from app.core.config import get_settings
 from app.graph.build import build_graph
 from app.graph.runtime import Deps, build_engine
@@ -161,9 +164,10 @@ def _sse_response(deps, q) -> StreamingResponse:
 
 @app.get("/stories/{story_id}/run-state")
 @locked
-def run_state(story_id: str):
+def run_state(story_id: str, user: AuthUser = Depends(get_current_user)):
     """会话恢复:前端挂载时查询 —— 运行中 / 等待中断(含中断卡数据)/ 空闲 + 事件历史。"""
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     events = [{"kind": k, "data": d} for k, d in deps.snapshot(story_id)]
     last_interrupt = None
     for k, d in reversed(deps.snapshot(story_id)):
@@ -176,37 +180,158 @@ def run_state(story_id: str):
 
 
 @app.post("/stories/{story_id}/attach")
-def attach(story_id: str):
+def attach(story_id: str, user: AuthUser = Depends(get_current_user)):
     """断线/刷新后重新订阅事件流(只收不发,不驱动图)。"""
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     return _sse_response(deps, deps.subscribe(story_id))
+
+
+# ================= 认证与用户管理(ADR-0022)=================
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"               # admin|user
+
+
+class UpdateUserRequest(BaseModel):
+    status: str = ""                 # active|disabled(空=不改)
+    new_password: str = ""           # 空=不改
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest):
+    """用户名密码换 JWT(短期);禁用账户拒绝登录。"""
+    deps, _ = engine()
+    row = deps.conn.execute(
+        "SELECT * FROM users WHERE username=?", (req.username,)).fetchone()
+    if row is None or row["status"] != "active" or not verify_password(
+            req.password, row["password_hash"]):
+        raise HTTPException(401, "invalid credentials")
+    token = create_access_token(
+        user_id=row["id"], username=row["username"], role=row["role"])
+    return {"access_token": token, "token_type": "bearer",
+            "username": row["username"], "role": row["role"]}
+
+
+@app.post("/auth/change-password")
+def change_password(req: ChangePasswordRequest, user: AuthUser = Depends(get_current_user)):
+    """当前用户自助改密(旧密码校验;改后需重新登录取新 token)。"""
+    deps, _ = engine()
+    row = deps.conn.execute(
+        "SELECT password_hash FROM users WHERE id=?", (user.id,)).fetchone()
+    if row is None or not verify_password(req.old_password, row["password_hash"]):
+        raise HTTPException(401, "invalid credentials")
+    if len(req.new_password) < 8:
+        raise HTTPException(400, "new password must be at least 8 characters")
+    deps.conn.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (hash_password(req.new_password), user.id))
+    deps.conn.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/users")
+def admin_create_user(req: CreateUserRequest, admin: AuthUser = Depends(get_admin_user)):
+    """管理员开户(ADR-0022 注册策略:无自助注册)。"""
+    deps, _ = engine()
+    if not req.username.strip() or len(req.password) < 8:
+        raise HTTPException(400, "username required; password at least 8 characters")
+    if req.role not in ("admin", "user"):
+        raise HTTPException(400, "role must be admin|user")
+    import uuid
+    try:
+        deps.conn.execute(
+            "INSERT INTO users (id, username, password_hash, role, status, created_at)"
+            " VALUES (?, ?, ?, ?, 'active', ?)",
+            (uuid.uuid4().hex, req.username.strip(),
+             hash_password(req.password), req.role,
+             __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+             .strftime("%Y-%m-%dT%H:%M:%SZ")))
+        deps.conn.commit()
+    except Exception as exc:   # UNIQUE 冲突等
+        raise HTTPException(400, f"cannot create user: {exc}")
+    return {"ok": True, "username": req.username.strip(), "role": req.role}
+
+
+@app.get("/admin/users")
+def admin_list_users(admin: AuthUser = Depends(get_admin_user)):
+    deps, _ = engine()
+    rows = deps.conn.execute(
+        "SELECT id, username, role, status, created_at FROM users ORDER BY created_at"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.patch("/admin/users/{user_id}")
+def admin_update_user(user_id: str, req: UpdateUserRequest,
+                      admin: AuthUser = Depends(get_admin_user)):
+    """禁用/启用、重置密码。禁用即时生效(每请求校验 status)。"""
+    deps, _ = engine()
+    row = deps.conn.execute(
+        "SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "user not found")
+    if req.status and req.status not in ("active", "disabled"):
+        raise HTTPException(400, "status must be active|disabled")
+    if req.status == "disabled" and user_id == admin.id:
+        raise HTTPException(400, "cannot disable yourself")
+    changed = 0
+    if req.status:
+        changed += deps.conn.execute(
+            "UPDATE users SET status=? WHERE id=?", (req.status, user_id)).rowcount
+    if req.new_password:
+        if len(req.new_password) < 8:
+            raise HTTPException(400, "new password at least 8 characters")
+        changed += deps.conn.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (hash_password(req.new_password), user_id)).rowcount
+    if not changed:
+        raise HTTPException(400, "nothing to update")
+    deps.conn.commit()
+    return {"ok": True, "user_id": user_id}
 
 
 # ================= 路由 =================
 
 @app.post("/stories")
 @locked
-def create_story(req: CreateStory):
+def create_story(req: CreateStory, user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
-    story_id, branch_id = deps.repo.create_story(req.title, req.premise)
+    story_id, branch_id = deps.repo.create_story(req.title, req.premise, owner_id=user.id)
     return {"story_id": story_id, "branch_id": branch_id}
 
 
 @app.get("/stories")
 @locked
-def list_stories():
+def list_stories(user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
     rows = deps.conn.execute(
         "SELECT s.*, (SELECT COUNT(*) FROM chapters c"
         "  WHERE c.story_id = s.id AND c.status='active') AS chapter_count"
-        " FROM stories s ORDER BY s.created_at DESC").fetchall()
+        " FROM stories s"
+        " WHERE s.owner_id=? OR s.id IN"
+        "   (SELECT story_id FROM story_members WHERE user_id=?)"
+        " ORDER BY s.created_at DESC", (user.id, user.id)).fetchall()
     return [dict(r) for r in rows]
 
 
 @app.get("/stories/{story_id}")
 @locked
-def story_detail(story_id: str):
+def story_detail(story_id: str, user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     story = deps.conn.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
     if not story:
         raise HTTPException(404, "story not found")
@@ -232,8 +357,10 @@ def story_detail(story_id: str):
 
 @app.post("/stories/{story_id}/generate")
 @locked
-def generate(story_id: str, req: GenerateRequest):
+def generate(story_id: str, req: GenerateRequest,
+             user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     story = deps.conn.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
     if not story:
         raise HTTPException(404, "story not found")
@@ -255,7 +382,10 @@ def generate(story_id: str, req: GenerateRequest):
 
 @app.post("/stories/{story_id}/resume")
 @locked
-def resume(story_id: str, req: ResumeRequest):
+def resume(story_id: str, req: ResumeRequest,
+           user: AuthUser = Depends(get_current_user)):
+    deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     return _sse_run(
         Command(resume={"action": req.action, "feedback": req.feedback,
                         "threads": req.threads}),
@@ -265,17 +395,20 @@ def resume(story_id: str, req: ResumeRequest):
 
 @app.post("/stories/{story_id}/stop")
 @locked
-def stop(story_id: str):
+def stop(story_id: str, user: AuthUser = Depends(get_current_user)):
     """协作式中断:置位停止请求,图在下一个节点边界安全退出(断点可续跑)。"""
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     deps.request_stop(story_id)
     return {"ok": True, "active": story_id in _active}
 
 
 @app.get("/stories/{story_id}/chapters/{chapter_no}")
 @locked
-def get_chapter(story_id: str, chapter_no: int):
+def get_chapter(story_id: str, chapter_no: int,
+                user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     row = deps.conn.execute(
         "SELECT * FROM chapters WHERE story_id=? AND chapter_no=? AND status='active'",
         (story_id, chapter_no)).fetchone()
@@ -286,12 +419,13 @@ def get_chapter(story_id: str, chapter_no: int):
 
 @app.get("/stories/{story_id}/codex")
 @locked
-def codex(story_id: str):
+def codex(story_id: str, user: AuthUser = Depends(get_current_user)):
     """设定集(Codex):角色卡 + 伏笔台账 + 当前有效世界记忆(排除被推翻/拒绝)。
 
     facts 推翻链与 world 回放同口径:有后续版本指向即失效,任一时点只呈现有效记忆。
     """
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     story = deps.conn.execute("SELECT main_branch_id FROM stories WHERE id=?",
                               (story_id,)).fetchone()
     if not story:
@@ -341,18 +475,30 @@ def codex(story_id: str):
 
 @app.get("/facts/pending")
 @locked
-def pending_facts():
+def pending_facts(user: AuthUser = Depends(get_current_user)):
+    """待审事实队列:只返回当前用户可见 story 的条目(ADR-0022 租户过滤)。"""
     deps, _ = engine()
+    ids = visible_story_ids(deps.conn, user)
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
     rows = deps.conn.execute(
         "SELECT f.*, s.title AS story_title FROM facts f JOIN stories s ON s.id=f.story_id"
-        " WHERE f.status='pending_review' ORDER BY f.created_at").fetchall()
+        f" WHERE f.status='pending_review' AND f.story_id IN ({marks})"
+        " ORDER BY f.created_at", ids).fetchall()
     return [dict(r) for r in rows]
 
 
 @app.post("/facts/{fact_id}/review")
 @locked
-def review_fact(fact_id: str, req: FactReview):
+def review_fact(fact_id: str, req: FactReview,
+                user: AuthUser = Depends(get_current_user)):
+    """审核裁决:校验该 fact 所属 story 在当前用户可见集合内(防跨租户审核)。"""
     deps, _ = engine()
+    fact = deps.conn.execute(
+        "SELECT story_id FROM facts WHERE id=?", (fact_id,)).fetchone()
+    if fact is None or story_role(deps.conn, fact["story_id"], user) is None:
+        raise HTTPException(404, "pending fact not found")
     new_status = "confirmed" if req.approve else "rejected"
     cur = deps.conn.execute(
         "UPDATE facts SET status=? WHERE id=? AND status='pending_review'",
@@ -367,9 +513,14 @@ def review_fact(fact_id: str, req: FactReview):
 
 @app.get("/entities/pending")
 @locked
-def pending_entity_proposals():
-    """AI 拿不准的实体合并提案(先写后合并:候选已独立落库,裁决后归一)。"""
+def pending_entity_proposals(user: AuthUser = Depends(get_current_user)):
+    """AI 拿不准的实体合并提案(先写后合并:候选已独立落库,裁决后归一)。
+    只返回当前用户可见 story 的条目。"""
     deps, _ = engine()
+    ids = visible_story_ids(deps.conn, user)
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
     rows = deps.conn.execute(
         "SELECT p.*, s.title AS story_title,"
         "       cf.name AS candidate_label, tf.name AS target_label"
@@ -377,7 +528,8 @@ def pending_entity_proposals():
         " JOIN stories s ON s.id = p.story_id"
         " LEFT JOIN entities cf ON cf.id = p.candidate_entity_id"
         " LEFT JOIN entities tf ON tf.id = p.target_entity_id"
-        " WHERE p.status='pending' ORDER BY p.created_at").fetchall()
+        f" WHERE p.status='pending' AND p.story_id IN ({marks})"
+        " ORDER BY p.created_at", ids).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -387,20 +539,26 @@ class EntityProposalReview(BaseModel):
 
 @app.post("/entities/{proposal_id}/review")
 @locked
-def review_entity_proposal(proposal_id: str, req: EntityProposalReview):
+def review_entity_proposal(proposal_id: str, req: EntityProposalReview,
+                           user: AuthUser = Depends(get_current_user)):
     """人工裁决:merge=执行归一(链接重定向/别名吸收/候选置 merged);
     new=独立实体;ignore=维持现状且不再重复提案。裁决持久生效。"""
     deps, _ = engine()
     if req.action not in ("merge", "new", "ignore"):
         raise HTTPException(400, "action must be merge|new|ignore")
+    p = deps.conn.execute(
+        "SELECT story_id FROM entity_merge_proposals WHERE id=?",
+        (proposal_id,)).fetchone()
+    if p is None or story_role(deps.conn, p["story_id"], user) is None:
+        raise HTTPException(404, "pending proposal not found")
     try:
-        p = deps.resolve_entity_proposal(proposal_id, req.action)
+        proposal = deps.resolve_entity_proposal(proposal_id, req.action)
     except LookupError:
         raise HTTPException(404, "pending proposal not found")
     status = "merged" if req.action == "merge" else (
         "new" if req.action == "new" else "ignored")
     return {"proposal_id": proposal_id, "status": status,
-            "candidate": p.get("candidate_name")}
+            "candidate": proposal.get("candidate_name")}
 
 
 class DirectiveRequest(BaseModel):
@@ -409,9 +567,11 @@ class DirectiveRequest(BaseModel):
 
 @app.post("/stories/{story_id}/directive")
 @locked
-def post_directive(story_id: str, req: DirectiveRequest):
+def post_directive(story_id: str, req: DirectiveRequest,
+                   user: AuthUser = Depends(get_current_user)):
     """用户指令通道:任意时刻提交,下一次章节生成的上下文中被主控消费。"""
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     if req.text.strip():
         deps.record_directive(story_id, req.text.strip())
     n = deps.conn.execute(
@@ -421,11 +581,11 @@ def post_directive(story_id: str, req: DirectiveRequest):
     return {"ok": True, "pending": n}
 
 
-# ================= 模型配置(ADR-0008:运行时覆盖)=================
+# ================= 模型配置(ADR-0008:运行时覆盖;全局配置,admin 专用)=================
 
 @app.get("/config/models")
 @locked
-def get_models():
+def get_models(admin: AuthUser = Depends(get_admin_user)):
     from app.core.config import AgentRole, get_settings
     s = get_settings()
     return {role.value: s.model_for(role) for role in AgentRole}
@@ -438,7 +598,7 @@ class ModelOverride(BaseModel):
 
 @app.post("/config/models")
 @locked
-def set_model(req: ModelOverride):
+def set_model(req: ModelOverride, admin: AuthUser = Depends(get_admin_user)):
     from app.core.config import AgentRole, get_settings
     try:
         role = AgentRole(req.role)
@@ -452,8 +612,9 @@ def set_model(req: ModelOverride):
 
 @app.get("/stories/{story_id}/usage")
 @locked
-def usage(story_id: str):
+def usage(story_id: str, user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     by_agent = deps.conn.execute(
         "SELECT agent, model, COUNT(*) calls, SUM(tokens_in) tin, SUM(tokens_out) tout,"
         " SUM(cached_tokens) cached, SUM(latency_ms) latency,"
@@ -466,9 +627,11 @@ def usage(story_id: str):
 
 @app.get("/stories/{story_id}/traces")
 @locked
-def traces(story_id: str, limit: int = 100):
+def traces(story_id: str, limit: int = 100,
+           user: AuthUser = Depends(get_current_user)):
     """全节点调用回溯:LLM 输入/输出快照(会话恢复/事后诊断)。"""
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     rows = deps.conn.execute(
         "SELECT agent, model, stage, input_text, output_text,"
         " tokens_in, tokens_out, latency_ms, created_at"
@@ -479,8 +642,9 @@ def traces(story_id: str, limit: int = 100):
 
 @app.get("/stories/{story_id}/reviews")
 @locked
-def reviews(story_id: str):
+def reviews(story_id: str, user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
+    require_story(deps.conn, story_id, user)
     rows = deps.conn.execute(
         "SELECT * FROM review_results WHERE story_id=? ORDER BY created_at",
         (story_id,)).fetchall()

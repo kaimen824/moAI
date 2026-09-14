@@ -83,6 +83,9 @@ class Settings:
     glm_api_key: str = ""
     dashscope_api_key: str = ""
     db_path: Path = DEFAULT_DB_PATH
+    # 认证(ADR-0022):JWT 签名密钥与有效期;公网部署必须用环境变量覆盖默认密钥
+    jwt_secret: str = "dev-insecure-secret-change-me-2026"
+    jwt_expire_hours: int = 2
     _model_overrides: dict[AgentRole, str] = field(default_factory=dict)
 
     # ---- 模型路由 ----
@@ -139,6 +142,8 @@ def get_settings() -> Settings:
                 glm_api_key=os.environ.get("GLM_API_KEY", ""),
                 dashscope_api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
                 db_path=Path(os.environ.get("NOVEL_DB_PATH", str(DEFAULT_DB_PATH))),
+                jwt_secret=os.environ.get("NOVEL_JWT_SECRET", "dev-insecure-secret-change-me-2026"),
+                jwt_expire_hours=int(os.environ.get("NOVEL_JWT_EXPIRE_HOURS", "2")),
             )
         return _settings
 
