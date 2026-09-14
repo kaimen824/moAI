@@ -2,7 +2,7 @@
 
 基于 LangGraph 的多 Agent 小说合写系统:Agent 注册表 16 项(规划/写作/评审/抽取/摘要/伏笔治理)、11 级模型路由角色分工协作,在 60 章量级合成世界的实测中维持设定一致、伏笔可追踪、角色视角严格隔离的长篇叙事。
 
-> 完整设计(ADR 决策记录编号至 ADR-0028 + trade-off 论证)见 [DESIGN_FINAL.md](DESIGN_FINAL.md) · 决策过程见 [PROJECT_DESIGN.md](PROJECT_DESIGN.md) · 公网部署见 [docs/DEPLOY.md](docs/DEPLOY.md)
+> 完整设计(ADR 决策记录编号至 ADR-0028 + trade-off 论证)见 [DESIGN_FINAL.md](DESIGN_FINAL.md) · 决策过程见 [PROJECT_DESIGN.md](PROJECT_DESIGN.md) · 公网部署见 [docs/DEPLOY.md](docs/DEPLOY.md) · 版本更新见 [CHANGELOG.md](CHANGELOG.md)
 
 ## 核心特性
 
