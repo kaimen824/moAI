@@ -16,8 +16,11 @@ export default function Login({ onLogin }) {
     try {
       const me = await api.login(username.trim(), password)
       onLogin(me)
-    } catch {
-      setErr('用户名或密码错误')
+    } catch (e) {
+      // 区分凭证错误与服务不可达:后端没启动/重启中不是"密码错"(误导排查)
+      setErr(String(e.message || '').startsWith('401')
+        ? '用户名或密码错误'
+        : '无法连接服务,请确认后端已启动(' + String(e.message || '').slice(0, 60) + ')')
     } finally {
       setBusy(false)
     }
