@@ -25,7 +25,8 @@ DASHSCOPE_API_KEY=sk-xxx
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `NOVEL_JWT_SECRET` | dev 默认值(**公网必改**) | JWT 签名密钥 |
-| `NOVEL_JWT_EXPIRE_HOURS` | `2` | token 有效期(小时) |
+| `NOVEL_JWT_EXPIRE_HOURS` | `2` | access token 有效期(小时) |
+| `NOVEL_JWT_REFRESH_EXPIRE_HOURS` | `168` | refresh token 有效期(小时,7 天;活跃用户滑动续期) |
 | `NOVEL_ADMIN_USER` | `admin` | 初始管理员用户名(仅首次 seed 生效) |
 | `NOVEL_ADMIN_PASSWORD` | `admin123`(**公网必改**) | 初始管理员口令 |
 | `NOVEL_DB_PATH` | `data/novel_agent.db` | SQLite 路径(WAL 自动开启) |

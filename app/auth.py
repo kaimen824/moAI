@@ -27,18 +27,32 @@ _bearer = HTTPBearer(auto_error=False)
 ADMIN_ROLE = "admin"
 
 
-def create_access_token(*, user_id: str, username: str, role: str) -> str:
+def create_token(*, user_id: str, username: str, role: str,
+                 token_type: str = "access") -> str:
+    """签发 JWT。token_type: access(短效,业务请求)| refresh(长效,仅换新用)。
+
+    类型写入 payload 并在消费端互斥校验——refresh token 不能当 access 用,
+    反之亦然(防降级:长效凭证顶替短效凭证绕过 2h 窗口)。
+    """
     s = get_settings()
     now = datetime.now(timezone.utc)
+    hours = (s.jwt_expire_hours if token_type == "access"
+             else s.jwt_refresh_expire_hours)
     payload = {
         "sub": user_id,
         "username": username,
         "role": role,
+        "typ": token_type,
         "iat": now,
-        "exp": now + timedelta(hours=s.jwt_expire_hours),
+        "exp": now + timedelta(hours=hours),
         "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, s.jwt_secret, algorithm="HS256")
+
+
+def create_access_token(*, user_id: str, username: str, role: str) -> str:
+    return create_token(user_id=user_id, username=username, role=role,
+                        token_type="access")
 
 
 def decode_token(token: str) -> dict[str, Any]:
@@ -64,10 +78,12 @@ class AuthUser(dict):
 def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> AuthUser:
-    """Bearer 认证依赖:JWT 有效 + 用户存在且 active(禁用即时失效)。"""
+    """Bearer 认证依赖:JWT 有效 + 是 access 类型 + 用户存在且 active(禁用即时失效)。"""
     if creds is None:
         raise HTTPException(401, "authentication required")
     payload = decode_token(creds.credentials)
+    if payload.get("typ") != "access":
+        raise HTTPException(401, "invalid or expired token")   # refresh 不能当 access 用
     from app.main import engine   # 延迟导入避免环
     deps, _ = engine()
     row = deps.conn.execute(
@@ -76,6 +92,17 @@ def get_current_user(
     if row is None or row["status"] != "active":
         raise HTTPException(401, "invalid or expired token")
     return AuthUser(id=row["id"], username=row["username"], role=row["role"])
+
+
+def get_refresh_payload(creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+                        ) -> dict[str, Any]:
+    """refresh 端点专用:校验 refresh 类型 JWT(类型互斥,access 不能当 refresh 用)。"""
+    if creds is None:
+        raise HTTPException(401, "authentication required")
+    payload = decode_token(creds.credentials)
+    if payload.get("typ") != "refresh":
+        raise HTTPException(401, "invalid or expired token")
+    return payload
 
 
 def get_admin_user(user: AuthUser = Depends(get_current_user)) -> AuthUser:

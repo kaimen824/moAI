@@ -87,14 +87,20 @@ def test_generate_rejected_when_story_already_active(client):
 
 
 def test_concurrent_resume_second_gets_409(client):
-    """真并发:两个线程同时触发 resume,恰好一个成功一个 409。"""
+    """真并发:两个线程同时触发 resume,恰好一个成功一个 409。
+
+    并发线程各自持有独立 TestClient(httpx Client 非为跨线程并发设计,
+    共享实例会串号响应——偶发"同 token 一请求 401"假象)。token 相同,
+    互斥裁决只应由服务端 _active 集合给出。
+    """
     c, deps = client
     sid = c.post("/stories", json={"title": "并发测试", "premise": "并发"}).json()["story_id"]
-    from tests.test_api import parse_sse
+    auth = dict(c.headers)
 
     def sse_post(url, payload):
-        r = c.post(url, json=payload)
-        return r.status_code
+        tc = TestClient(main.app)
+        tc.headers.update(auth)
+        return tc.post(url, json=payload).status_code
 
     # 先推进到总大纲确认中断(worker 在后台跑到 interrupt)
     assert c.post(f"/stories/{sid}/generate",

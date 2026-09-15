@@ -13,7 +13,7 @@
 | **混合检索** | 结构化查表主路 + 实体链接扩展 + 向量兜底;远距离召回 100%(naive 为 0%),10-60 章实测不衰减 |
 | **双评审闭环** | 大纲一致性 + 质量审校并行评审,自动重写循环(上限可配),LLM 输出 schema 硬校验+失败安全降级(绝不静默 pass) |
 | **human-in-the-loop** | 三类中断点:总大纲确认 / 阶段细纲确认 / 章节审阅+伏笔人工复核;中断卡持久化,刷新/重启不丢 |
-| **认证与多租户** | JWT Bearer + 管理员开户 + story_members 租户隔离(ADR-0022);同一 story 单 active run 互斥(ADR-0023) |
+| **认证与多租户** | JWT 双 token(access 2h + refresh 7d 滑动续期,ADR-0029)+ 管理员开户 + story_members 租户隔离(ADR-0022);同一 story 单 active run 互斥(ADR-0023) |
 | **成本工程** | 按 Agent 分级路由(强/中/便宜),全链路 usage 埋点按用户/run 归因,每日 token 预算闸门(story/全局) |
 | **可插拔架构** | 单向依赖规则(import-linter 进 CI)+ Agent 注册表 + 插件契约 |
 

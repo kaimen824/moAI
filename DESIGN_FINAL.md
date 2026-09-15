@@ -647,3 +647,25 @@ run_id 只存在于事件流,usage_log/agent_traces/review_results 无归属,事
   近 24h LLM 调用数与失败率(分母 usage_log、分子 llm_failures)、
   token 成本按日+story+owner 聚合(近 200 行)。JSON 口径,不引外部
   metrics 栈。
+
+**ADR-0029 双 token 认证(评审后运营反馈)**:诊断——access JWT 默认 2h,
+过期即踢回登录;前端门卫只查 localStorage 有无 token,长会话(写作一上午)
+每隔 2h"莫名"断一次,且无诊断线索。机制:
+- **类型互斥**:payload 写 `typ`(access|refresh),消费端校验——refresh
+  不能当 access 用(防长效凭证顶替绕过 2h 窗口),access 不能当 refresh
+  用(防短期 token 自我续期成永动机)。`POST /auth/refresh` 专用依赖
+  `get_refresh_payload` 校验 refresh 类型。
+- **滑动续期,无状态**:refresh 7 天(NOVEL_JWT_REFRESH_EXPIRE_HOURS,
+  默认 168),每次 refresh 签发全新 access+refresh 对——活跃用户永不
+  被踢;不引 token 表、不旋转(旧 refresh 自然过期即失效),撤销语义
+  仍靠 access 短效 + 每请求查 users.status(禁用即时失效,refresh 签发
+  时同样再查 status)。
+- **前端单飞**:401 → 单飞 refreshOnce()(并发多请求只发一次
+  /auth/refresh)→ 重试原请求一次 → 仍 401 才踢出,且 console.warn
+  记录请求 URL 与原因(refresh 失败/无凭证)——"莫名被踢"从不可诊断
+  变为控制台一行定位。SSE 请求同路径(generate/resume/attach)。
+- **trade-off**:无状态 refresh 的代价是无法主动吊销单个会话(丢了
+  refresh token = 7 天窗口内可换新)——接受:单人/小团队部署,禁用
+  账户(status)与改 jwt_secret(全员下线)已覆盖实际撤销需求;引
+  token 表换吊销粒度不属于当前威胁模型。
+

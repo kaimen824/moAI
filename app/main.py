@@ -20,9 +20,10 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
-from app.auth import (AuthUser, create_access_token, get_admin_user,
-                      get_current_user, hash_password, require_story,
-                      story_role, verify_password, visible_story_ids)
+from app.auth import (AuthUser, create_token, get_admin_user,
+                      get_current_user, get_refresh_payload, hash_password,
+                      require_story, story_role, verify_password,
+                      visible_story_ids)
 from app.core.config import get_settings
 from app.graph.build import build_graph
 from app.graph.runtime import Deps, build_engine
@@ -310,19 +311,36 @@ class UpdateUserRequest(BaseModel):
     new_password: str = ""           # 空=不改
 
 
+def _issue_tokens(row) -> dict:
+    """为 users 行签发 access+refresh 对(ADR-0029)。"""
+    kw = {"user_id": row["id"], "username": row["username"], "role": row["role"]}
+    return {"access_token": create_token(**kw, token_type="access"),
+            "refresh_token": create_token(**kw, token_type="refresh"),
+            "token_type": "bearer",
+            "username": row["username"], "role": row["role"]}
+
+
 @app.post("/auth/login")
 def login(req: LoginRequest):
-    """用户名密码换 JWT(短期);禁用账户拒绝登录。"""
+    """用户名密码换 JWT 对(access 短效 + refresh 长效);禁用账户拒绝登录。"""
     deps, _ = engine()
     row = deps.conn.execute(
         "SELECT * FROM users WHERE username=?", (req.username,)).fetchone()
     if row is None or row["status"] != "active" or not verify_password(
             req.password, row["password_hash"]):
         raise HTTPException(401, "invalid credentials")
-    token = create_access_token(
-        user_id=row["id"], username=row["username"], role=row["role"])
-    return {"access_token": token, "token_type": "bearer",
-            "username": row["username"], "role": row["role"]}
+    return _issue_tokens(row)
+
+
+@app.post("/auth/refresh")
+def refresh(payload: dict = Depends(get_refresh_payload)):
+    """refresh token 换新对(滑动续期);签发时再查 users.status,禁用即时失效。"""
+    deps, _ = engine()
+    row = deps.conn.execute(
+        "SELECT * FROM users WHERE id=?", (payload["sub"],)).fetchone()
+    if row is None or row["status"] != "active":
+        raise HTTPException(401, "invalid or expired token")
+    return _issue_tokens(row)
 
 
 @app.post("/auth/change-password")

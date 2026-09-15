@@ -86,6 +86,8 @@ class Settings:
     # 认证(ADR-0022):JWT 签名密钥与有效期;公网部署必须用环境变量覆盖默认密钥
     jwt_secret: str = "dev-insecure-secret-change-me-2026"
     jwt_expire_hours: int = 2
+    # refresh token 有效期(ADR-0029):access 过期后前端凭它静默换新,滑动续期
+    jwt_refresh_expire_hours: int = 168
     # LLM 弹性(ADR-0026,评审 6.10):显式超时与 SDK 内置重试(429/5xx 指数退避)
     llm_timeout_seconds: float = 120.0
     llm_max_retries: int = 3
@@ -150,6 +152,7 @@ def get_settings() -> Settings:
                 db_path=Path(os.environ.get("NOVEL_DB_PATH", str(DEFAULT_DB_PATH))),
                 jwt_secret=os.environ.get("NOVEL_JWT_SECRET", "dev-insecure-secret-change-me-2026"),
                 jwt_expire_hours=int(os.environ.get("NOVEL_JWT_EXPIRE_HOURS", "2")),
+                jwt_refresh_expire_hours=int(os.environ.get("NOVEL_JWT_REFRESH_EXPIRE_HOURS", "168")),
                 llm_timeout_seconds=float(os.environ.get("NOVEL_LLM_TIMEOUT_SECONDS", "120")),
                 llm_max_retries=int(os.environ.get("NOVEL_LLM_MAX_RETRIES", "3")),
                 story_daily_token_budget=int(os.environ.get("NOVEL_STORY_DAILY_TOKEN_BUDGET", "0")),

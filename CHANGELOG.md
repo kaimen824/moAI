@@ -31,6 +31,11 @@
 - **JWT 认证与多租户(ADR-0022)**:argon2id 口令哈希、短期 token、
   `story_members` 租户隔离;story 列表/详情/抽检队列/合并提案全部按
   可见集合过滤,跨租户访问 404。禁用账户即时失效。
+- **双 token 静默续期(ADR-0029)**:登录签发 access(2h)+ refresh(7 天)
+  对,类型互斥;`POST /auth/refresh` 换新对(滑动续期,签发时再查
+  users.status)。前端 401 先单飞 refresh 并重试原请求一次,仍失败才踢出,
+  控制台记录请求 URL 与原因——长会话不再每 2h 被踢回登录,"莫名被踢"
+  可凭 F12 一行日志定位。
 - **并发互斥与事件归属(ADR-0023)**:同一 story 同时仅允许一个 active run,
   双击/并发第二个请求 409(此前会产生重复章节与事件串台);每 run 的
   `run_id` 经 ContextVar 贯通事件流、usage、traces、评审记录、失败台账。

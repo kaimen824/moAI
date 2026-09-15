@@ -183,3 +183,59 @@ def test_change_password_flow(anon_client):
                   json={"old_password": "ginapass1", "new_password": "newpass123"}).status_code == 200
     assert c.post("/auth/login", json={"username": "gina",
                                        "password": "newpass123"}).status_code == 200
+
+
+# ---- refresh token(ADR-0029):双 token 类型互斥 + 滑动续期 ----
+
+def _do_login(c, username="admin", password="admin123") -> dict:
+    r = c.post("/auth/login", json={"username": username, "password": password})
+    assert r.status_code == 200
+    return r.json()
+
+
+def test_login_returns_refresh_pair_and_refresh_flow(anon_client):
+    """login 返回双 token;refresh 换新对,新 access 可正常访问业务端点。"""
+    c, _ = anon_client
+    data = _do_login(c)
+    assert data["access_token"] and data["refresh_token"]
+
+    r = c.post("/auth/refresh", headers={"Authorization": f"Bearer {data['refresh_token']}"})
+    assert r.status_code == 200
+    pair = r.json()
+    assert pair["access_token"] and pair["refresh_token"]
+    # 新 access 可访问业务端点(滑动续期闭环)
+    assert c.get("/stories", headers={
+        "Authorization": f"Bearer {pair['access_token']}"}).status_code == 200
+
+
+def test_token_type_mutual_exclusion(anon_client):
+    """类型互斥:refresh 不能当 access 用,access 不能当 refresh 用(防降级)。"""
+    c, _ = anon_client
+    data = _do_login(c)
+    # refresh token 顶替 access -> 401
+    assert c.get("/stories", headers={
+        "Authorization": f"Bearer {data['refresh_token']}"}).status_code == 401
+    # access token 顶替 refresh -> 401
+    assert c.post("/auth/refresh", headers={
+        "Authorization": f"Bearer {data['access_token']}"}).status_code == 401
+
+
+def test_refresh_rejected_for_disabled_or_bad(anon_client):
+    """禁用用户 refresh 即时拒绝;坏 token / 缺凭证 401。"""
+    c, _ = anon_client
+    admin = _do_login(c)
+    c.post("/admin/users", headers={"Authorization": f"Bearer {admin['access_token']}"},
+           json={"username": "hank", "password": "hankpass1", "role": "user"})
+    hank = _do_login(c, "hank", "hankpass1")
+    uid = [u for u in c.get("/admin/users", headers={
+        "Authorization": f"Bearer {admin['access_token']}"}).json()
+        if u["username"] == "hank"][0]["id"]
+    c.patch(f"/admin/users/{uid}", headers={
+        "Authorization": f"Bearer {admin['access_token']}"},
+        json={"status": "disabled"})
+    assert c.post("/auth/refresh", headers={
+        "Authorization": f"Bearer {hank['refresh_token']}"}).status_code == 401
+
+    assert c.post("/auth/refresh", headers={
+        "Authorization": "Bearer not.a.jwt"}).status_code == 401
+    assert c.post("/auth/refresh").status_code == 401          # 无凭证
