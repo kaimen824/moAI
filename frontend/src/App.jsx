@@ -8,7 +8,7 @@ import {
 import { makeT } from './copy.js'
 import { getToken, clearToken } from './api.js'
 import Landing from './Landing.jsx'
-import Login from './components/Login.jsx'
+import LoginPage from './LoginPage.jsx'
 import Library from './components/Library.jsx'
 import Workbench from './components/Workbench.jsx'
 import Reader from './components/Reader.jsx'
@@ -26,7 +26,7 @@ export default function App() {
   const [storyId, setStoryId] = useState(null)
   const [dark, setDark] = useState(() => localStorage.getItem('molan-dark') !== '0')
   const [devMode, setDevMode] = useState(() => localStorage.getItem('molan-dev') === '1')
-  // 认证门卫(ADR-0022):无 token 显示登录页;任意 401(molan-unauthorized)踢回
+  // 认证门卫(ADR-0022):首页公开;仅 #/app(工作台)要求登录;401(molan-unauthorized)踢回
   const [authed, setAuthed] = useState(() => !!getToken())
 
   useEffect(() => {
@@ -35,26 +35,33 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
   useEffect(() => {
-    const onKick = () => setAuthed(false)
+    // 401 踢出(ADR-0029 静默续期失败后的兜底):直接落在登录页
+    const onKick = () => { setAuthed(false); window.location.hash = '#/login' }
     window.addEventListener('molan-unauthorized', onKick)
     return () => window.removeEventListener('molan-unauthorized', onKick)
   }, [])
+  // 路由守卫:#/app 未认证 → 登录页;已认证访问 #/login → 回工作台
+  useEffect(() => {
+    if (!authed && route === '#/app') window.location.hash = '#/login'
+    if (authed && route === '#/login') window.location.hash = '#/app'
+  }, [authed, route])
   useEffect(() => { localStorage.setItem('molan-dark', dark ? '1' : '0') }, [dark])
   useEffect(() => { localStorage.setItem('molan-dev', devMode ? '1' : '0') }, [devMode])
 
   const t = makeT(devMode)
 
-  if (authed && route !== '#/app') {
-    return <Landing onEnter={() => { window.location.hash = '#/app' }} />
+  // 路由:首页(落地页)公开,登录是独立页(#/login);仅工作台(#/app)要求登录
+  if (route === '#/app' && authed) {
+    return renderApp()
   }
-  if (!authed) {
+  if (route === '#/login' || route === '#/app') {
     return (
-      <Theme appearance={dark ? 'dark' : 'light'} accentColor="indigo" radius="medium">
-        <Login onLogin={() => setAuthed(true)} />
-      </Theme>
+      <LoginPage onLogin={() => { setAuthed(true); window.location.hash = '#/app' }} />
     )
   }
+  return <Landing onEnter={() => { window.location.hash = authed ? '#/app' : '#/login' }} />
 
+  function renderApp() {
   const NAV = [
     { key: 'library', label: '书库', icon: <BookOpenIcon size={18} /> },
     { key: 'workbench', label: '工作台', icon: <LightningIcon size={18} /> },
@@ -113,7 +120,7 @@ export default function App() {
                 <Flex align="center" justify="center" style={{
                   width: 40, height: 40, borderRadius: 10, cursor: 'pointer',
                   color: 'var(--gray-11)',
-                }} onClick={() => { clearToken(); setAuthed(false) }}>
+                }} onClick={() => { clearToken(); setAuthed(false); window.location.hash = '#/' }}>
                   <SignOutIcon size={18} />
                 </Flex>
               </Tooltip>
@@ -134,4 +141,5 @@ export default function App() {
       </Theme>
     </AppCtx.Provider>
   )
+  }
 }

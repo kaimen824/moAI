@@ -1,0 +1,100 @@
+/* 墨澜登录页 — 暗夜编辑风(与落地页同一设计语言:墨底 · 墨金 · 衬线标题) */
+
+.loginpage {
+  --ink: #0f1216;
+  --ink-2: #151a21;
+  --paper: #e8e3d8;
+  --paper-dim: #b7b1a3;
+  --gold: #e0af68;
+  --danger: #d97878;
+  --hairline: rgba(232, 227, 216, 0.1);
+  --serif: Georgia, "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+  --sans: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  min-height: 100dvh;
+  display: flex; flex-direction: column;
+}
+.loginpage ::selection { background: var(--gold); color: var(--ink); }
+
+.lp-wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; width: 100%; box-sizing: border-box; }
+
+/* ---- Nav ---- */
+.lp-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 68px; border-bottom: 1px solid var(--hairline);
+}
+.lp-logo { font-family: var(--serif); font-size: 20px; letter-spacing: 0.35em; color: var(--paper); text-decoration: none; }
+.lp-logo em { color: var(--gold); font-style: normal; }
+.lp-back { color: var(--paper-dim); font-size: 14px; text-decoration: none; }
+.lp-back:hover { color: var(--paper); }
+
+/* ---- 主体(非对称分栏,与落地页 hero 同构)---- */
+.lp-main {
+  flex: 1; display: grid; grid-template-columns: 7fr 5fr; gap: 48px;
+  align-items: center; padding: 48px 0;
+}
+.lp-copy h1 {
+  font-family: var(--serif); font-weight: 400;
+  font-size: clamp(32px, 4.5vw, 52px); line-height: 1.25; margin: 0 0 20px;
+  letter-spacing: 0.02em;
+}
+.lp-copy h1 em { font-style: normal; color: var(--gold); }
+.lp-copy p { color: var(--paper-dim); font-size: 15px; line-height: 1.9; margin: 0; max-width: 30em; }
+
+/* ---- 表单面板(l-preview 同款容器)---- */
+.lp-panel {
+  background: var(--ink-2); border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 28px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.lp-panel h2 {
+  font-family: var(--serif); font-weight: 400; font-size: 14px;
+  color: var(--gold); letter-spacing: 0.3em; margin: 0 0 22px;
+}
+.lp-field { display: block; margin-bottom: 18px; }
+.lp-field span { display: block; font-size: 12px; color: var(--paper-dim); margin-bottom: 8px; letter-spacing: 0.08em; }
+.lp-input {
+  width: 100%; box-sizing: border-box;
+  background: var(--ink); color: var(--paper);
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 10px 12px;
+  font-size: 14px; font-family: var(--sans); outline: none;
+  transition: border-color 0.2s;
+}
+.lp-input:focus { border-color: var(--gold); }
+.lp-input::placeholder { color: rgba(183, 177, 163, 0.45); }
+.lp-error { font-size: 13px; color: var(--danger); line-height: 1.7; margin: 0 0 16px; }
+.lp-submit {
+  width: 100%; background: var(--gold); color: var(--ink); border: none; cursor: pointer;
+  font-size: 14px; font-weight: 600; padding: 11px 20px; border-radius: 4px;
+  font-family: var(--sans);
+  transition: filter 0.2s, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lp-submit:hover { filter: brightness(1.08); }
+.lp-submit:active { transform: translateY(1px); }
+.lp-submit:disabled { opacity: 0.55; cursor: default; }
+.lp-hint {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hairline);
+  font-size: 12px; color: var(--paper-dim); line-height: 1.8;
+}
+
+/* ---- Footer(与落地页同款)---- */
+.lp-footer {
+  border-top: 1px solid var(--hairline); padding: 22px 0;
+  display: flex; justify-content: space-between; font-size: 12px; color: var(--paper-dim);
+}
+
+/* ---- 动效(克制;reduced-motion 降级)---- */
+@media (prefers-reduced-motion: no-preference) {
+  .lp-copy { animation: lp-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .lp-panel { animation: lp-in 0.7s 0.12s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  @keyframes lp-in { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-copy, .lp-panel { animation: none; }
+}
+
+/* ---- 移动端 ---- */
+@media (max-width: 860px) {
+  .lp-main { grid-template-columns: 1fr; gap: 28px; padding: 36px 0; }
+}
