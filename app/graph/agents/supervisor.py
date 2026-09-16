@@ -118,9 +118,13 @@ class StageOutlineNode(BaseAgent):
                 "若总大纲的某卷事件已部分完成,只规划其未完成部分。\n"
                 "每章要有新的剧情推进,但推进不等于解决。总长不超过 600 字。"
             ),
-            user=f"[总大纲]\n{state.get('master_outline','')}\n\n"
-                 f"[已完成章数]{done}\n\n[已完成剧情回顾]\n{recap}\n\n"
-                 f"[上期衔接]{brief}",
+            user=(f"[总大纲]\n{state.get('master_outline','')}\n\n"
+                  f"[已完成章数]{done}\n\n[已完成剧情回顾]\n{recap}\n\n"
+                  f"[上期衔接]{brief}"
+                  + ("\n\n[用户对上一版细纲的修改意见(优先落实)] "
+                     + state["user_input"]["feedback"]
+                     if isinstance(state.get("user_input"), dict)
+                     and state["user_input"].get("action") == "revise" else "")),
             stage="stage_outline",
             story_id=state.get("story_id", ""),
         )
