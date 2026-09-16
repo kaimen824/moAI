@@ -7,6 +7,7 @@ __pycache__/
 
 # Data & secrets
 data/
+logs/
 *.db
 *.db-wal
 *.db-shm

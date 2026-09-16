@@ -25,9 +25,11 @@ from app.auth import (AuthUser, create_token, get_admin_user,
                       require_story, story_role, verify_password,
                       visible_story_ids)
 from app.core.config import get_settings
+from app.core.logsetup import setup_logging
 from app.graph.build import build_graph
 from app.graph.runtime import Deps, build_engine
 
+setup_logging()                     # 日志落盘(logs/novel.log):崩溃/卡死现场可追溯
 logger = logging.getLogger("novel.agent")
 
 app = FastAPI(title="novel-agent", version="0.1.0")

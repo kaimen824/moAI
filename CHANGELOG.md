@@ -54,6 +54,9 @@
   token 成本按日+story+owner 聚合。
 - **部署文档**:`docs/DEPLOY.md` —— 必设环境变量、`NOVEL_*` 全清单、
   单 worker 约束、nginx SSE 反代 / Caddy HTTPS、SQLite 备份、systemd 示例。
+- **日志落盘**:`novel.agent` 业务日志与 `uvicorn.error` 服务层错误双通道
+  写 `logs/novel.log`(5MB×5 轮转,`NOVEL_LOG_DIR`/`NOVEL_LOG_LEVEL` 可调)
+  ——控制台进程一关现场即失,崩溃/卡死从此有账可查。
 
 ### 修复
 

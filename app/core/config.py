@@ -94,6 +94,9 @@ class Settings:
     # 每日 token 预算(UTC 日,按 usage_log 聚合;0 = 不限)——公网成本闸门
     story_daily_token_budget: int = 0
     global_daily_token_budget: int = 0
+    # 日志落盘(logsetup):目录与级别;logs/novel.log 5MB×5 轮转
+    log_dir: Path = Path("logs")
+    log_level: str = "INFO"
     _model_overrides: dict[AgentRole, str] = field(default_factory=dict)
 
     # ---- 模型路由 ----
@@ -157,6 +160,8 @@ def get_settings() -> Settings:
                 llm_max_retries=int(os.environ.get("NOVEL_LLM_MAX_RETRIES", "3")),
                 story_daily_token_budget=int(os.environ.get("NOVEL_STORY_DAILY_TOKEN_BUDGET", "0")),
                 global_daily_token_budget=int(os.environ.get("NOVEL_GLOBAL_DAILY_TOKEN_BUDGET", "0")),
+                log_dir=Path(os.environ.get("NOVEL_LOG_DIR", "logs")),
+                log_level=os.environ.get("NOVEL_LOG_LEVEL", "INFO"),
             )
         return _settings
 

@@ -30,6 +30,8 @@ DASHSCOPE_API_KEY=sk-xxx
 | `NOVEL_ADMIN_USER` | `admin` | 初始管理员用户名(仅首次 seed 生效) |
 | `NOVEL_ADMIN_PASSWORD` | `admin123`(**公网必改**) | 初始管理员口令 |
 | `NOVEL_DB_PATH` | `data/novel_agent.db` | SQLite 路径(WAL 自动开启) |
+| `NOVEL_LOG_DIR` | `logs` | 日志目录(`novel.log` 5MB×5 轮转;含业务与服务层错误双通道) |
+| `NOVEL_LOG_LEVEL` | `INFO` | 业务日志级别 |
 | `NOVEL_LLM_TIMEOUT_SECONDS` | `120` | 每次 LLM 调用超时 |
 | `NOVEL_LLM_MAX_RETRIES` | `3` | SDK 内置 429/5xx 退避重试次数 |
 | `NOVEL_STORY_TOKEN_BUDGET`… 见下 | `0`(不限) | 每日 token 预算(UTC 日,usage_log 聚合) |
