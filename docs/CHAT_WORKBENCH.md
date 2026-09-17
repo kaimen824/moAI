@@ -43,6 +43,24 @@ ReAct agent 的自由是"选择下一步做什么",不是"改流程规则"。
 | 裁决型 | review_draft_outline / review_quality / review_threads / merge_reviews | 可调可看,**产出 AI 无权改**——verdict 是代码逻辑,agent 只转述 |
 | 闸门/落库型 | confirm_* / user_review_chapter / finalize / commit_character_seeds | **不是工具**,永远不进工具表;确认动作只来自用户 |
 
+### 1b. ReAct 独占节点(2026-09-17 所有者拍板)
+
+**revamp_chapter(重构历史章节)**:选已定稿章 + 意见 → 重写 → 照常走
+三评审/人审/定稿。**一键模式拓扑上不可达,只有 ReAct 工具表能发起**:
+
+- **门禁四层**:① wiring 注册**无入边**(START→route_entry 永远到不了,
+  一键模式没有"重构旧章"入口);② 执行只在工具内(get_state 取底 →
+  跑节点函数 → update_state(as_node="revamp_chapter") 写回);③ 出边
+  接回写作后评审链,写回即占位,后续闸门照走;④ 工具表只挂 chat 端点。
+  已验证(LangGraph):无入边节点可编译且 invoke 不可达;as_node 写回
+  后 stream(None) 从其出边续跑;写回不执行节点函数本身。
+- **边界**:目标章必须是已定稿章;主 run 在跑时 409(与一键互斥一致);
+  重写后该章 event_extract 重跑,fact_changes 正常进台账。
+- **待拍板(开工前必答)——后续章节追溯语义**:改第 N 章后,第 N+1 起
+  已定稿章节怎么办?a) 不追溯(只改目标章+事实链更新,风险:剧情断裂
+  无提示);b) 冲突标注(重写评审时对照后续章找矛盾,列出供作者逐章
+  决定重写与否);c) 级联重写(N 之后全部重写,成本爆炸,基本排除)。
+
 ### 2. 复合工具(不变式的守门人)
 
 - **run_reviews**:一次调用 = 三评审 fan-out + merge 表决 + 分流裁决
@@ -108,8 +126,8 @@ ReAct 每一步落盘 JSONL,按 story 分文件:`logs/chat/{story_id}.jsonl`。
 
 | 期 | 内容 | 量级 |
 |---|---|---|
-| P0 | facade tools 透传 + chat_messages + ReAct 循环(查询+流程+directive 三类工具)+ ChatDock UI | 2 天 |
-| P1 | NodeRunner(get/update_state 通道)+ 节点工具与复合工具(run_reviews/rewrite_with_feedback)+ 对话内确认卡 → Agent 模式成型 | 2-3 天 |
+| P0 | facade tools 透传 + chat_messages + ReAct 循环(查询+流程+directive 三类工具)+ ChatDock UI ✅(2026-09-17,08d3a60) | 2 天 |
+| P1 | NodeRunner(get/update_state 通道)+ 节点工具与复合工具(run_reviews/rewrite_with_feedback)+ ReAct 独占节点 revamp_chapter(重构历史章节,所有者 2026-09-17 拍板;开工前先拍"后续章节追溯语义")+ 对话内确认卡 → Agent 模式成型 | 2-3 天 |
 | P2(独立) | ②③ 对话命令(regen_stage / reoutline;"修订确认保留进度"行为变更另拍板) | 1 天 |
 
 ## 八、明确不做
