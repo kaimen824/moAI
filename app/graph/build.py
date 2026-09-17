@@ -352,10 +352,13 @@ def route_entry(state: GraphState) -> str:
 
 
 def route_after_stage_review(state: GraphState) -> str:
+    """细纲确认后必经 chapter_slice:阶段首章若直连写作,state 里残留的
+    上一阶段末章 chapter_brief 会被 writer/一致性评审当成"本章基准"
+    (ch19 串章事故:评审拿 ch18 要点逐条审 ch19 草稿,三轮乒乓转人工)。"""
     decision = state.get("user_input") or {}
     if decision.get("action") == "revise":
         return "regen_stage"
-    return "build_context"
+    return "chapter_slice"
 
 
 def route_after_stage_agent_review(state: GraphState) -> str:
@@ -449,7 +452,7 @@ def build_graph(deps: Deps, checkpointer=None):
     )
     g.add_conditional_edges(
         "confirm_stage_outline", route_after_stage_review,
-        {"regen_stage": "stage_outline", "build_context": "build_context"},
+        {"regen_stage": "stage_outline", "chapter_slice": "chapter_slice"},
     )
     g.add_edge("chapter_slice", "build_context")
     g.add_edge("build_context", "write_draft")

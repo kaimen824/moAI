@@ -131,12 +131,19 @@ class StageOutlineNode(BaseAgent):
         return {"stage_outline": outline, "is_stage_first": True,
                 "stage_start_chapter": done + 1,
                 "stage_end_chapter": deps.parse_stage_range(outline, start=done + 1),
-                "stage_regen_count": state.get("stage_regen_count", 0) + 1}
+                "stage_regen_count": state.get("stage_regen_count", 0) + 1,
+                # 新阶段开始即作废旧章要点(防御:残留的 chapter_brief 一旦
+                # 进入写作/评审上下文会被当成"本章基准"——ch19 串章事故)
+                "chapter_brief": ""}
 
 
 @register_agent
 class ChapterSliceNode(BaseAgent):
-    """非首章:从已确认阶段细纲切片派生本章要点(R1 裁决 a:轻量,无评审)。"""
+    """每章(含阶段首章):从已确认阶段细纲切片派生本章要点(R1 裁决 a:轻量,无评审)。
+
+    首章也必经此节点:细纲确认后若直连写作,上一阶段末章的 chapter_brief
+    会残留为 writer/评审的"本章基准"(ch19 串章事故)。
+    """
 
     name = "supervisor"
     role = AgentRole.SUPERVISOR

@@ -313,6 +313,59 @@ def test_e2e_agent_traces_recorded(engine):
     assert draft_row["output_text"]             # 输入输出快照齐全
 
 
+def test_stage_first_chapter_slices_fresh_baseline(tmp_path):
+    """阶段首章必须重新切片(ch19 串章事故回归):confirm_stage_outline 后
+    一律经 chapter_slice 生成新基准——不得沿用上一阶段末章的 chapter_brief
+    (事故中评审拿 ch18 要点逐条审 ch19 草稿,三轮乒乓转人工)。"""
+    import json as _json
+    calls = {"outline": 0, "slice": 0}
+
+    def dynamic(stage: str):
+        if stage == "stage_outline":
+            calls["outline"] += 1
+            outline = ("1| 阶段一:古碑初现,沈砚与白芷夜探|沈砚,白芷|异象\n"
+                       "2| 阶段一:古碑力量觉醒|沈砚|觉醒"
+                       if calls["outline"] == 1 else
+                       "3| 阶段二:离村远行,踏上旅途|沈砚,白芷|启程\n"
+                       "4| 阶段二:初入宗门|沈砚|新篇")
+            return R(content=outline, model="fake")
+        if stage == "chapter_slice":
+            calls["slice"] += 1
+            return R(content=f"本章要点:独有标记{calls['slice']}", model="fake")
+        val = SCRIPTS.get(stage)
+        if val is None:
+            return None
+        return val if isinstance(val, R) else R(
+            content=val if isinstance(val, str) else _json.dumps(val, ensure_ascii=False),
+            model="fake")
+
+    facade = LLMFacade(response_override=dynamic)
+    deps, conn = build_engine(tmp_path / "slice.db", llm=facade)
+    graph = build_graph(deps, checkpointer=deps.checkpointer)
+    story_id, branch = deps.repo.create_story("首章切片", "测试")
+    cfg = {"configurable": {"thread_id": "slice-1"}}
+
+    graph.invoke({"story_id": story_id, "branch_id": branch,
+                  "target_chapters": 3, "initial_input": "x"}, cfg)   # 中断 0
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)          # 中断 A(细纲1-2)
+    graph.invoke(Command(resume={"action": "confirm"}), cfg)          # ch1 中断 B
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)  # ch2 中断 B
+    graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)  # ch3 需新细纲
+    result = graph.invoke(Command(resume={"action": "confirm"}), cfg)  # 确认新细纲 -> 中断 B
+    intr = result["__interrupt__"][0].value
+    assert intr["type"] == "user_review_chapter" and intr["chapter_no"] == 3
+
+    # 每章(含两轮阶段首章 ch1/ch3)都有自己的切片——共 3 次
+    assert calls["slice"] == 3
+    # 回归断言:ch3 的写作基准是本阶段新切片,不含上一阶段末章(ch2)的旧要点
+    drafts = conn.execute(
+        "SELECT input_text FROM agent_traces WHERE stage='draft' AND story_id=?"
+        " ORDER BY created_at", (story_id,)).fetchall()
+    assert len(drafts) == 3
+    assert "独有标记3" in drafts[-1]["input_text"]      # 新切片已生成并注入 writer
+    assert "独有标记2" not in drafts[-1]["input_text"]  # 旧章要点不得串入
+
+
 def test_e2e_rewrite_exhausted_notifies_user(engine, monkeypatch):
     """重写达上限不自动强制通过:needs_user 中断携带 rewrite_exhausted,交用户裁决。"""
     monkeypatch.setitem(SCRIPTS, "review_draft_outline",
