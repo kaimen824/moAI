@@ -669,3 +669,23 @@ run_id 只存在于事件流,usage_log/agent_traces/review_results 无归属,事
   账户(status)与改 jwt_secret(全员下线)已覆盖实际撤销需求;引
   token 表换吊销粒度不属于当前威胁模型。
 
+
+**ADR-0030 后端解耦重构(2026-09-17,所有者拍板"先重构")**:诊断——
+importlinter 分层契约中 app.api 是空包,813 行 main.py 游离在契约外;
+graph/runtime.py 的 Deps 单类混 7 种职责(事件总线/SQL 直访/记忆拼装/
+风格策略/定稿大事务/运行状态机/失败台账),conn.execute 直写 runtime 57 处、
+main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业务混杂。
+功能线(数据飞轮/分卷大纲②③)排队,重构先行。机制(docs/REFACTOR.md):
+- **绞杀者五阶段**:0 契约硬化(main.py 迁 app/api,旧路径兼容转发)→
+  1 main.py 拆 routes/+sse+RunService → 2 Deps 拆显式协作者
+  (EventBus/RunStateStore/RecapBuilder/StylePolicy/FailureLedger/
+  FinalizeUoW,ports 先立,Deps 变兼容门面)→ 3 SQL 收敛仓储+定稿 UoW →
+  4 build.py 三分(wiring/routes/nodes)。每阶段 146+ 测试全绿即 commit,
+  可独立停止/回退。
+- **依赖方向**:api → application ← infrastructure;graph 编排挂
+  application 之上;core 垫底;全项目仅装配点(build_engine 进化)知道
+  具体实现。
+- **trade-off(裁剪,防过度设计)**:不拆多进程(进程内互斥/单事务是
+  ADR-0023/0027 有意设计);不引 DI 框架(装配点唯一,手工构造注入);
+  不引 ORM(手写 DDL/SQL 是资产);不立 domain 目录(纯规则三次法则)。
+  解耦深度匹配单机单进程约 100 用户体量,不为"层数"付费。
