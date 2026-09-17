@@ -698,3 +698,46 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
   端口+单事务)而非 application 转发层——纯 DB 事务无业务规则。
   全程 150 测试绿 + 契约 KEPT,行为零变化,每阶段独立 commit(46c72f6/
   af57507/40b6e15)可回退。
+
+
+**ADR-0031 对话式工作台 ChatDock(2026-09-17,所有者三轮定调)**:诊断——
+一键生成是唯一入口,"写快点/换个方向/现在到哪了"这类意图只能等下一次
+生成或去读界面;工具条折叠输入框只到 directive 通道,不可查询不可对话。
+所有者三条根定调:一键生成不是唯一入口;Agent 模式同样生成、同样落库、
+该有的审核同样有;用 ReAct 模式(方案演进 v1 意图路由 → v2 双模式单内核
+→ v3 ReAct,docs/CHAT_WORKBENCH.md)。机制:
+- **双模式单内核**:Agent 模式与一键生成共享同一图 state/checkpoint/
+  评审循环/闸门/commit_finalize/usage_log;ReAct 循环手写(~百行,不引
+  create_react_agent,ADR-0030 精神)。agent 的自由是"选择下一步做什么",
+  不是"改流程规则"。
+- **function calling 透传**:ChatMessage 加 tool_calls/tool_call_id/name,
+  LLMResponse 加 tool_calls;openai_compat 序列化 assistant 工具请求与
+  tool 回执;facade.chat 加 tools 参数直通 provider(override 回放分支
+  不受影响)。新 AgentRole.CHAT(默认 glm-5,温度 0.6)。
+- **P0 工具三类**(生成型节点工具 P1 接入):查询(book_detail/chapter/
+  codex/usage/run_status,只读复用 queries.py)/流程(stop_run 置协作
+  停止;启动仍引导按钮,P1 桥接)/指令(record_directive 走既有通道,
+  下一次生成生效)。工具执行异常作为观察回填,循环不中断。
+- **chat_messages 表(migration v8)**:id/story_id/user_id/role(user|
+  assistant|tool|system)/content/meta_json/created_at,单 story 单会话;
+  tool_calls 与 tool 回执结构化入 meta_json,history_messages 完整还原
+  工具链(下一轮 ReAct 可见上一轮调用过程)。
+- **全链路 debug 日志(所有者硬需求)**:logs/chat/{story_id}.jsonl 每
+  事件一行(user_message/step/tool_call 参数全文/tool_result 观察**全文
+  不截断**/final_reply/error),含 ts/turn_id/步号/耗时/tokens;落盘全量
+  与 LLM 上下文回填截断(3000 字)两者独立;写失败不阻断主流程。与
+  agent_traces 分工:traces 管 LLM 调用快照,JSONL 管决策链时序。
+- **步数上限兜失控**:chat_max_steps(默认 15,可配)耗尽后强制一次无
+  工具总结调用,保证每轮有最终回复;成本上 ReAct 思考步额外消耗,预算
+  闸门(BudgetExceeded→429)照常生效。
+- **人审不旁路**:确认/审核类操作不进工具表,agent 只能建议不能代替;
+  对话内确认卡 P1 落地。
+- **trade-off**:P0 不做对话内触发生成(启动引导按钮,P1 NodeRunner 桥
+  接 SSE 双流);不做多会话轮换(单 story 单会话,超长后截近 N 条);
+  chat_messages 直写不加引擎锁(WAL 单行原子,与 queries.py 读模型同口径)。
+- **实施结果(P0 当日交付)**:facade tools 透传链 + migration v8 +
+  application/chat_service.py(ReAct 循环 + ChatToolbox 七工具)+
+  api/routes/chat.py(SSE chat + history)+ 前端 ChatDock.jsx(消息流/
+  工具执行卡/Enter 发送 Shift+Enter 换行,替换原"指示…"折叠入口)。
+  155 测试绿(新增 test_chat.py 五用例:ReAct 循环/工具链还原/坏参数
+  回填/步数上限/401)+ 契约 KEPT。

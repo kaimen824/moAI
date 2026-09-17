@@ -91,6 +91,7 @@ class LLMFacade:
         story_id: str = "",
         max_tokens: int | None = None,
         response_format: dict | None = None,
+        tools: list[dict] | None = None,       # function calling 工具表(ADR-0031)
     ) -> LLMResponse:
         from app.core.llm.router import ModelRouter  # 延迟导入避免环
 
@@ -124,6 +125,7 @@ class LLMFacade:
             temperature=route.temperature,
             max_tokens=max_tokens,
             response_format=response_format,
+            tools=tools,
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         self._emit_usage(
@@ -141,7 +143,9 @@ class LLMFacade:
         )
         self._emit_trace(
             agent=role.value, model=route.model, stage=stage, story_id=story_id,
-            messages=messages, output=resp.content,
+            messages=messages,
+            output=resp.content if not resp.tool_calls
+            else f"[tool_calls] {[(c['name'], c['arguments']) for c in resp.tool_calls]}",
             tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
             latency_ms=latency_ms, trace_id=trace_id,
         )

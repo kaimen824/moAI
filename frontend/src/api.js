@@ -127,6 +127,9 @@ export const api = {
   attach: (id, onEvent) => sse(`/stories/${id}/attach`, {}, onEvent),
   runState: (id) => j(`/stories/${id}/run-state`),
   directive: (id, text) => j(`/stories/${id}/directive`, { method: "POST", body: JSON.stringify({ text }) }),
+  // ChatDock(ADR-0031):SSE 下发 ReAct 事件;reply/error 后服务端关流,sse() 自然退出
+  chatSend: (id, message, onEvent) => sse(`/stories/${id}/chat`, { message }, onEvent),
+  chatHistory: (id) => j(`/stories/${id}/chat/history`),
   pendingFacts: () => j("/facts/pending"),
   reviewFact: (fid, approve) => j(`/facts/${fid}/review`, { method: "POST", body: JSON.stringify({ approve }) }),
   entityProposals: () => j("/entities/pending"),

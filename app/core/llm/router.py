@@ -21,6 +21,7 @@ ROLE_TEMPERATURES: dict[AgentRole, float] = {
     AgentRole.ENTITY: 0.2,       # 消歧裁决:确定性优先(ADR-0015)
     AgentRole.POLISH: 0.3,       # 文风精校:忠实改写优先(ADR-0018)
     AgentRole.SUMMARY: 0.3,
+    AgentRole.CHAT: 0.6,         # 对话助理:稳定但有温度
     AgentRole.EMBEDDING: 0.0,    # 无意义,占位
 }
 

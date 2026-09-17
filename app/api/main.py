@@ -10,7 +10,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.api.routes import admin, auth, config, entities, facts, observability, stories
+from app.api.routes import admin, auth, chat, config, entities, facts, observability, stories
 from app.core.logsetup import setup_logging
 
 setup_logging()                     # 日志落盘(logs/novel.log):崩溃/卡死现场可追溯
@@ -20,7 +20,8 @@ logger = logging.getLogger("novel.agent")
 def create_app() -> FastAPI:
     app = FastAPI(title="novel-agent", version="0.1.0")
     for r in (stories.router, auth.router, admin.router, facts.router,
-              entities.router, config.router, observability.router):
+              entities.router, config.router, observability.router,
+              chat.router):
         app.include_router(r)
     return app
 

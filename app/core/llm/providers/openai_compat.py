@@ -46,6 +46,28 @@ class OpenAICompatChat(ChatClient):
     def last_usage(self) -> tuple[int, int, int] | None:
         return getattr(self._usage_local, "usage", None)
 
+    @staticmethod
+    def _serialize(messages: Sequence[ChatMessage]) -> list[dict]:
+        """ChatMessage -> OpenAI 消息(含 tool_calls / tool 回执,ADR-0031)。"""
+        out: list[dict] = []
+        for m in messages:
+            if m.role == "assistant" and m.tool_calls:
+                out.append({
+                    "role": "assistant",
+                    "content": m.content or "",
+                    "tool_calls": [
+                        {"id": tc["id"], "type": "function",
+                         "function": {"name": tc["name"],
+                                      "arguments": tc.get("arguments", "{}")}}
+                        for tc in m.tool_calls],
+                })
+            elif m.role == "tool":
+                out.append({"role": "tool", "tool_call_id": m.tool_call_id,
+                            "name": m.name, "content": m.content or ""})
+            else:
+                out.append({"role": m.role, "content": m.content})
+        return out
+
     def chat(
         self,
         model: str,
@@ -54,19 +76,27 @@ class OpenAICompatChat(ChatClient):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         response_format: dict | None = None,
+        tools: list[dict] | None = None,
     ) -> LLMResponse:
         kwargs: dict = {
             "model": model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": self._serialize(messages),
             "temperature": temperature,
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         if response_format is not None:
             kwargs["response_format"] = response_format
+        if tools is not None:
+            kwargs["tools"] = tools
         resp = self._client.chat.completions.create(**kwargs)
         choice = resp.choices[0]
         usage = getattr(resp, "usage", None)
+        calls = []
+        for tc in (getattr(choice.message, "tool_calls", None) or []):
+            fn = tc.function
+            calls.append({"id": tc.id, "name": fn.name,
+                          "arguments": fn.arguments or "{}"})
         return LLMResponse(
             content=choice.message.content or "",
             model=model,
@@ -74,6 +104,7 @@ class OpenAICompatChat(ChatClient):
             tokens_out=getattr(usage, "completion_tokens", 0) or 0,
             cached_tokens=_cached_tokens(usage) if usage is not None else 0,
             finish_reason=choice.finish_reason or "",
+            tool_calls=calls,
         )
 
     def stream(

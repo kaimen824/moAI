@@ -360,6 +360,19 @@ CREATE TABLE IF NOT EXISTS story_run_state (
   started_at        TEXT,
   updated_at        TEXT NOT NULL
 );
+
+-- ========== 对话会话(ADR-0031 ChatDock)==========
+-- 按 story 单会话;meta_json 存工具调用与观察摘要、turn_id、闸门暂停等
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id         TEXT PRIMARY KEY,
+  story_id   TEXT NOT NULL REFERENCES stories(id),
+  user_id    TEXT,
+  role       TEXT NOT NULL,                    -- user|assistant|tool|system
+  content    TEXT NOT NULL,
+  meta_json  TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_story ON chat_messages(story_id, created_at);
 """
 
 ALL_TABLES = [
@@ -372,7 +385,7 @@ ALL_TABLES = [
     "entities", "entity_links", "entity_aliases", "entity_merge_proposals",
     "agent_acl",
     "review_results", "usage_log", "agent_traces", "retrieval_audit",
-    "user_directives", "llm_failures", "story_run_state",
+    "user_directives", "llm_failures", "story_run_state", "chat_messages",
 ]
 
 BASELINE_VERSION = 1
@@ -536,6 +549,23 @@ def _m7_observability(conn) -> None:
     add_column("llm_failures", "retry_count", "INTEGER")
 
 
+def _m8_chat_messages(conn) -> None:
+    """v8:对话会话表(ADR-0031 ChatDock)——按 story 单会话的消息流。"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+          id         TEXT PRIMARY KEY,
+          story_id   TEXT NOT NULL REFERENCES stories(id),
+          user_id    TEXT,
+          role       TEXT NOT NULL,
+          content    TEXT NOT NULL,
+          meta_json  TEXT,
+          created_at TEXT NOT NULL
+        )""")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_messages_story"
+        " ON chat_messages(story_id, created_at)")
+
+
 # (version, name, 执行函数);version 严格递增,migrate() 按序补齐未应用版本。
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
@@ -544,6 +574,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (5, "llm_failures", _m5_llm_failures),
     (6, "run_state", _m6_run_state),
     (7, "observability", _m7_observability),
+    (8, "chat_messages", _m8_chat_messages),
 ]
 
 

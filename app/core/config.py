@@ -43,6 +43,7 @@ class AgentRole(str, Enum):
     POLISH = "POLISH"              # 文风精校(ADR-0018)— 便宜
     SUMMARY = "SUMMARY"            # 摘要 — 便宜
     THREAD = "THREAD"              # 伏笔评审(ADR-0020)— 中(埋设准入/tier/到期复核)
+    CHAT = "CHAT"                  # 对话工作台 ReAct 循环(ADR-0031)— 强,需 function calling
     EMBEDDING = "EMBEDDING"        # embedding 独立配置
 
 
@@ -59,6 +60,7 @@ DEFAULT_MODELS: dict[AgentRole, str] = {
     AgentRole.POLISH: "deepseek-v3",
     AgentRole.SUMMARY: "deepseek-v3",
     AgentRole.THREAD: "deepseek-v3",
+    AgentRole.CHAT: "glm-5",
     AgentRole.EMBEDDING: "qwen3.7-text-embedding",
 }
 
@@ -97,6 +99,8 @@ class Settings:
     # 日志落盘(logsetup):目录与级别;logs/novel.log 5MB×5 轮转
     log_dir: Path = Path("logs")
     log_level: str = "INFO"
+    # 对话工作台(ADR-0031):ReAct 单轮工具调用步数上限(兜失控,可配)
+    chat_max_steps: int = 15
     _model_overrides: dict[AgentRole, str] = field(default_factory=dict)
 
     # ---- 模型路由 ----

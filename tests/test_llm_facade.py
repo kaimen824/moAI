@@ -22,8 +22,10 @@ class FakeChat(ChatClient):
     def __init__(self):
         self.calls: list[dict] = []
 
-    def chat(self, model, messages, *, temperature=0.7, max_tokens=None, response_format=None):
-        self.calls.append({"model": model, "temperature": temperature, "n": len(messages)})
+    def chat(self, model, messages, *, temperature=0.7, max_tokens=None,
+             response_format=None, tools=None):
+        self.calls.append({"model": model, "temperature": temperature,
+                           "n": len(messages), "tools": tools})
         return LLMResponse(content=json.dumps({"ok": True}), model=model,
                            tokens_in=10, tokens_out=5, cached_tokens=4)
 

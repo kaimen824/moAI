@@ -4,13 +4,14 @@ import {
   Switch, Tabs, Text, TextArea, TextField, Tooltip,
 } from '@radix-ui/themes'
 import {
-  CheckCircleIcon, PaperPlaneTiltIcon, PencilSimpleIcon,
+  CheckCircleIcon, ChatCircleDotsIcon, PencilSimpleIcon,
   PlayIcon, StarIcon, StopIcon, XCircleIcon,
 } from '@phosphor-icons/react'
 import { api } from '../api.js'
 import { useApp } from '../App.jsx'
 import { TEMPLATES } from '../templates.js'
 import ChapterSidebar from './ChapterSidebar.jsx'
+import ChatDock from './ChatDock.jsx'
 import ProcessPanel from './ProcessPanel.jsx'
 
 /* 题材标签:多选 token */
@@ -182,9 +183,7 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
   const [detail, setDetail] = useState(null)      // {story, chapters, characters, plot_threads}
   const [existingChapters, setExistingChapters] = useState(0)
   const [elapsed, setElapsed] = useState(0)
-  const [directive, setDirective] = useState('')
-  const [directiveOpen, setDirectiveOpen] = useState(false)
-  const [directiveMsg, setDirectiveMsg] = useState('')
+  const [chatOpen, setChatOpen] = useState(false)
   const [tags, setTags] = useState([])
   const [stopping, setStopping] = useState(false)
   const [rightOpen, setRightOpen] = useState(true)
@@ -313,15 +312,6 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
     } catch (e) { setMsg('暂停失败:' + e.message) }
   }
 
-  const sendDirective = async () => {
-    if (!directive.trim()) return
-    try {
-      const r = await api.directive(storyId, directive)
-      setDirectiveMsg(`已记录(${r.pending} 条待生效),下一章生成时生效`)
-      setDirective('')
-    } catch (e) { setDirectiveMsg('提交失败:' + e.message) }
-  }
-
   const fmt = (sec) => `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
   const storyTitle = detail?.story?.title || ''
 
@@ -351,10 +341,10 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
             {!running && !intr && msg && <Text size="1" color="gray">{msg}</Text>}
 
             <Flex gap="2" align="center" style={{ marginLeft: 'auto' }}>
-              <Tooltip content={t.directive}>
-                <Button size="2" variant={directiveOpen ? 'solid' : 'soft'} onClick={() => setDirectiveOpen(o => !o)}>
-                  <PaperPlaneTiltIcon size={14} />
-                  指示{directiveOpen ? '' : '…'}
+              <Tooltip content="创作对话:查询书籍 / 记录指令 / 请求暂停">
+                <Button size="2" variant={chatOpen ? 'solid' : 'soft'} onClick={() => setChatOpen(o => !o)}>
+                  <ChatCircleDotsIcon size={14} />
+                  对话
                 </Button>
               </Tooltip>
               <Tooltip content={autoMode
@@ -389,19 +379,10 @@ export default function Workbench({ storyId, onOpenCodex, onOpenReader }) {
               )}
             </Flex>
           </Flex>
-          {directiveOpen && (
-            <Flex gap="2" align="center" wrap="wrap" mt="2">
-              <TextField.Root size="2" style={{ flex: 1, minWidth: 240 }}
-                placeholder="随时告诉 AI 你的想法(下一章加入新角色 / 节奏加快 / 回收伏笔)…"
-                value={directive} onChange={e => setDirective(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && sendDirective()} />
-              <Button size="2" variant="surface" onClick={sendDirective} disabled={!directive.trim()}>
-                提交指示
-              </Button>
-              {directiveMsg && <Text size="1" color="gray">{directiveMsg}</Text>}
-            </Flex>
-          )}
         </Card>
+
+        {/* 创作对话(ChatDock,ADR-0031):指令下达 / 状态查询 */}
+        {chatOpen && <ChatDock storyId={storyId} />}
 
         {/* 中断卡:出现时优先占据中栏(等待用户) */}
         {intr && <InterruptCard intr={intr} t={t} onSend={send} busy={running} />}

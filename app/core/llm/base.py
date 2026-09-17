@@ -9,8 +9,13 @@ from typing import Iterator, Sequence
 
 @dataclass
 class ChatMessage:
-    role: str                      # system | user | assistant
+    role: str                      # system | user | assistant | tool
     content: str
+    # function calling(ADR-0031 ChatDock):assistant 的工具调用请求 /
+    # tool 消息的工具回执——不参与调用时保持默认,序列化即原三字段
+    tool_calls: list[dict] | None = None   # [{id, name, arguments(json str)}]
+    tool_call_id: str = ""                 # role=tool 时对应请求的 id
+    name: str = ""                         # role=tool 时的工具名
 
 
 @dataclass
@@ -21,6 +26,8 @@ class LLMResponse:
     tokens_out: int = 0
     cached_tokens: int = 0        # prompt 命中缓存的 token 数(不支持的服务为 0)
     finish_reason: str = ""
+    # 模型请求的工具调用(OpenAI 兼容格式;content 为空、finish_reason=tool_calls)
+    tool_calls: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +65,7 @@ class ChatClient(ABC):
         temperature: float = 0.7,
         max_tokens: int | None = None,
         response_format: dict | None = None,   # {"type": "json_object"} 等
+        tools: list[dict] | None = None,       # function calling 工具表(透传)
     ) -> LLMResponse: ...
 
     @abstractmethod
