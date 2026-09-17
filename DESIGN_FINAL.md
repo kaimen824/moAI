@@ -689,3 +689,12 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
   ADR-0023/0027 有意设计);不引 DI 框架(装配点唯一,手工构造注入);
   不引 ORM(手写 DDL/SQL 是资产);不立 domain 目录(纯规则三次法则)。
   解耦深度匹配单机单进程约 100 用户体量,不为"层数"付费。
+- **实施结果(2026-09-17 当日交付)**:五阶段全部完成——runtime.py
+  973 行上帝对象 → 门面 254 行 + 九组件(runtime_components,端口见
+  application/ports);api 层内联 SQL 清零(queries.py 四域读模型:
+  StoryQueries/ReviewQueues/UserStore/ObservabilityQueries;Agent 侧
+  ACL 仓储与用户侧读模型分工);build.py 三分(nodes/routes/wiring,
+  build.py 变兼容转发)。定稿 UoW 落位 infrastructure(FinalizeStore
+  端口+单事务)而非 application 转发层——纯 DB 事务无业务规则。
+  全程 150 测试绿 + 契约 KEPT,行为零变化,每阶段独立 commit(46c72f6/
+  af57507/40b6e15)可回退。
