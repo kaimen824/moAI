@@ -62,9 +62,9 @@ StylePolicy/FailureLedger/FinalizeUoW),全项目仅装配点(composition root)
 
 | 阶段 | 内容 | 量级 | 状态 |
 |---|---|---|---|
-| 0 契约硬化 | main.py 迁入 app/api/(旧路径兼容转发),app.api 层真实生效 | 半天 | 施工中 |
-| 1 main.py 拆分 | routes/ 域模块 + sse.py + api/deps.py;预算/SSE 下沉 RunService | 1-2 天 | 待开工 |
-| 2 Deps 拆解 | ports 先立,Deps 变兼容门面,节点依赖显式化 | 2-3 天 | 待开工 |
+| 0 契约硬化 | main.py 迁入 app/api/(旧路径兼容转发),app.api 层真实生效 | 半天 | ✅ 完成 |
+| 1 main.py 拆分 | routes/ 域模块 + sse.py + api/deps.py;预算闸门下沉 RunService | 1-2 天 | ✅ 完成 |
+| 2 Deps 拆解 | ports 先立,Deps 变兼容门面,组件落 app/infrastructure | 2-3 天 | ✅ 完成 |
 | 3 SQL 收敛 | 内联 SQL 迁仓储;commit_finalize → FinalizeUoW | 2-3 天 | 待开工 |
 | 4 build.py 三分 | wiring / routes / nodes 分离 | 1-2 天 | 待开工 |
 
