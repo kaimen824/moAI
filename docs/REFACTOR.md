@@ -29,15 +29,18 @@ app/
 │   ├── deps.py         #   FastAPI Depends 装配(引擎单例/当前用户)
 │   └── main.py         #   create_app() 工厂
 ├── application/        # 用例层:业务动作服务化,依赖显式声明
-│   ├── ports.py        #   接口:EventPublisher/RunStateStore/RecapBuilder/
-│   │                   #   StylePolicy/FailureLedger/UnitOfWork ...
-│   ├── run_service.py  #   generate/resume/stop/状态机/互斥/预算闸门
-│   └── finalize_service.py  # 定稿 UoW(事务边界显式化)
+│   ├── ports.py        #   端口:EventBus/RunStateStore/DirectiveChannel/
+│   │                   #   RecapBuilder/StylePolicy/CharacterRegistry/
+│   │                   #   FailureLedger/FinalizeStore/StopController
+│   └── run_service.py  #   预算闸门(用量聚合经 ObservabilityQueries)
 ├── graph/              # 编排层:只留 LangGraph
 │   ├── wiring.py       #   纯图结构
 │   ├── routes.py       #   路由谓词(route_* 纯函数)
 │   └── nodes.py        #   节点薄壳(图内业务函数)
-├── infrastructure/     # 适配器(Deps 协作器的 Sqlite 实现归此语义)
+├── infrastructure/     # 适配器(Deps 协作器 + UI 读模型的 Sqlite 实现归此语义)
+│   ├── runtime_components.py  # 九个 Deps 协作组件(阶段2)
+│   └── queries.py             # StoryQueries/ReviewQueues/UserStore/
+│                               # ObservabilityQueries(UI 读模型,阶段3)
 ├── memory/ db/ core/   # 现有模块,保持
 └── main.py             # 兼容转发 → app.api.main(保 uvicorn app.main:app)
 ```
@@ -65,7 +68,7 @@ StylePolicy/FailureLedger/FinalizeUoW),全项目仅装配点(composition root)
 | 0 契约硬化 | main.py 迁入 app/api/(旧路径兼容转发),app.api 层真实生效 | 半天 | ✅ 完成 |
 | 1 main.py 拆分 | routes/ 域模块 + sse.py + api/deps.py;预算闸门下沉 RunService | 1-2 天 | ✅ 完成 |
 | 2 Deps 拆解 | ports 先立,Deps 变兼容门面,组件落 app/infrastructure | 2-3 天 | ✅ 完成 |
-| 3 SQL 收敛 | 内联 SQL 迁仓储;commit_finalize → FinalizeUoW | 2-3 天 | 待开工 |
+| 3 SQL 收敛 | api 层内联 SQL → infrastructure/queries.py 四域读模型;定稿 UoW 由阶段2 FinalizeStore 达成(端口+单事务,落位 infrastructure 而非 application——纯 DB 事务无业务规则,不再建转发层) | 2-3 天 | ✅ 完成 |
 | 4 build.py 三分 | wiring / routes / nodes 分离 | 1-2 天 | 待开工 |
 
 锚点测试:阶段1 test_api/test_run_state;阶段2 全量+test_supervisor_feedback;

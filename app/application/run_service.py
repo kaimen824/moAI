@@ -1,7 +1,8 @@
 """运行用例服务(ADR-0030 阶段1):预算闸门等业务规则。
 
 application 层不依赖表现层:超限抛 BudgetExceeded,api 层负责转换为
-429 + X-Error-Code 响应(错误契约不变)。
+429 + X-Error-Code 响应(错误契约不变)。用量聚合 SQL 在
+infrastructure.queries.ObservabilityQueries(ADR-0030 阶段3 收敛)。
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.core.config import get_settings
+from app.infrastructure.queries import ObservabilityQueries
 
 
 class BudgetExceeded(Exception):
@@ -32,22 +34,12 @@ def check_daily_budget(deps, story_id: str) -> None:
         "global": (settings.global_daily_token_budget, "全站今日 token 预算已用尽"),
     }
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    def _spent(scope_story_id: str | None) -> int:
-        if scope_story_id is None:
-            row = deps.conn.execute(
-                "SELECT COALESCE(SUM(COALESCE(tokens_in,0)+COALESCE(tokens_out,0)),0) s"
-                " FROM usage_log WHERE substr(created_at,1,10)=?", (today,)).fetchone()
-        else:
-            row = deps.conn.execute(
-                "SELECT COALESCE(SUM(COALESCE(tokens_in,0)+COALESCE(tokens_out,0)),0) s"
-                " FROM usage_log WHERE story_id=? AND substr(created_at,1,10)=?",
-                (scope_story_id, today)).fetchone()
-        return row["s"] or 0
+    usage = ObservabilityQueries(deps.conn)
 
     for scope, (limit, message) in limits.items():
         if limit <= 0:
             continue
-        spent = _spent(None if scope == "global" else story_id)
+        spent = usage.spent_today(
+            today, None if scope == "global" else story_id)
         if spent >= limit:
             raise BudgetExceeded(scope, spent, limit, message)

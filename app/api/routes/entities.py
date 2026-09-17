@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.api.deps import engine, locked
 from app.auth import AuthUser, get_current_user, story_role, visible_story_ids
+from app.infrastructure.queries import ReviewQueues
 
 router = APIRouter()
 
@@ -24,17 +25,7 @@ def pending_entity_proposals(user: AuthUser = Depends(get_current_user)):
     ids = visible_story_ids(deps.conn, user)
     if not ids:
         return []
-    marks = ",".join("?" * len(ids))
-    rows = deps.conn.execute(
-        "SELECT p.*, s.title AS story_title,"
-        "       cf.name AS candidate_label, tf.name AS target_label"
-        " FROM entity_merge_proposals p"
-        " JOIN stories s ON s.id = p.story_id"
-        " LEFT JOIN entities cf ON cf.id = p.candidate_entity_id"
-        " LEFT JOIN entities tf ON tf.id = p.target_entity_id"
-        f" WHERE p.status='pending' AND p.story_id IN ({marks})"
-        " ORDER BY p.created_at", ids).fetchall()
-    return [dict(r) for r in rows]
+    return ReviewQueues(deps.conn).pending_proposals(ids)
 
 
 @router.post("/entities/{proposal_id}/review")
@@ -46,10 +37,9 @@ def review_entity_proposal(proposal_id: str, req: EntityProposalReview,
     deps, _ = engine()
     if req.action not in ("merge", "new", "ignore"):
         raise HTTPException(400, "action must be merge|new|ignore")
-    p = deps.conn.execute(
-        "SELECT story_id FROM entity_merge_proposals WHERE id=?",
-        (proposal_id,)).fetchone()
-    if p is None or story_role(deps.conn, p["story_id"], user) is None:
+    q = ReviewQueues(deps.conn)
+    story_id = q.proposal_story_id(proposal_id)
+    if story_id is None or story_role(deps.conn, story_id, user) is None:
         raise HTTPException(404, "pending proposal not found")
     try:
         proposal = deps.resolve_entity_proposal(proposal_id, req.action)

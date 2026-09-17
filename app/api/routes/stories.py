@@ -12,6 +12,7 @@ from app.api.deps import _active, engine, locked
 from app.api.sse import resume_command, sse_run
 from app.application.run_service import BudgetExceeded, check_daily_budget
 from app.auth import AuthUser, get_current_user, require_story
+from app.infrastructure.queries import StoryQueries
 
 router = APIRouter()
 
@@ -104,14 +105,7 @@ def create_story(req: CreateStory, user: AuthUser = Depends(get_current_user)):
 @locked
 def list_stories(user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
-    rows = deps.conn.execute(
-        "SELECT s.*, (SELECT COUNT(*) FROM chapters c"
-        "  WHERE c.story_id = s.id AND c.status='active') AS chapter_count"
-        " FROM stories s"
-        " WHERE s.owner_id=? OR s.id IN"
-        "   (SELECT story_id FROM story_members WHERE user_id=?)"
-        " ORDER BY s.created_at DESC", (user.id, user.id)).fetchall()
-    return [dict(r) for r in rows]
+    return StoryQueries(deps.conn).list_for_user(user.id)
 
 
 @router.get("/stories/{story_id}")
@@ -119,27 +113,10 @@ def list_stories(user: AuthUser = Depends(get_current_user)):
 def story_detail(story_id: str, user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
     require_story(deps.conn, story_id, user)
-    story = deps.conn.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
-    if not story:
+    try:
+        return StoryQueries(deps.conn).detail(story_id)
+    except LookupError:
         raise HTTPException(404, "story not found")
-    chapters = deps.conn.execute(
-        "SELECT id, chapter_no, version_no, title, status, updated_at,"
-        " length(content) AS clen FROM chapters"
-        " WHERE story_id=? AND status='active' ORDER BY chapter_no", (story_id,)).fetchall()
-    outline = deps.conn.execute(
-        "SELECT content FROM outlines WHERE story_id=? AND status='confirmed'"
-        " ORDER BY version_no DESC LIMIT 1", (story_id,)).fetchone()
-    characters = deps.conn.execute(
-        "SELECT id, name, profile FROM characters WHERE story_id=?", (story_id,)).fetchall()
-    threads = deps.conn.execute(
-        "SELECT * FROM plot_threads WHERE story_id=?", (story_id,)).fetchall()
-    return {
-        "story": dict(story),
-        "outline": outline["content"] if outline else None,
-        "chapters": [dict(c) for c in chapters],
-        "characters": [dict(c) for c in characters],
-        "plot_threads": [dict(t) for t in threads],
-    }
 
 
 @router.post("/stories/{story_id}/generate")
@@ -152,7 +129,7 @@ def generate(story_id: str, req: GenerateRequest,
         check_daily_budget(deps, story_id)
     except BudgetExceeded as exc:
         raise _budget_http_error(exc)
-    story = deps.conn.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
+    story = StoryQueries(deps.conn).story_row(story_id)
     if not story:
         raise HTTPException(404, "story not found")
     branch = req.branch_id or story["main_branch_id"]
@@ -199,9 +176,7 @@ def get_chapter(story_id: str, chapter_no: int,
                 user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
     require_story(deps.conn, story_id, user)
-    row = deps.conn.execute(
-        "SELECT * FROM chapters WHERE story_id=? AND chapter_no=? AND status='active'",
-        (story_id, chapter_no)).fetchone()
+    row = StoryQueries(deps.conn).active_chapter(story_id, chapter_no)
     if not row:
         raise HTTPException(404, "chapter not found")
     return dict(row)
@@ -216,49 +191,10 @@ def codex(story_id: str, user: AuthUser = Depends(get_current_user)):
     """
     deps, _ = engine()
     require_story(deps.conn, story_id, user)
-    story = deps.conn.execute("SELECT main_branch_id FROM stories WHERE id=?",
-                              (story_id,)).fetchone()
-    if not story:
+    q = StoryQueries(deps.conn)
+    if q.story_row(story_id) is None:
         raise HTTPException(404, "story not found")
-    branch = story["main_branch_id"]
-    characters = deps.conn.execute(
-        "SELECT id, name, profile FROM characters WHERE story_id=? ORDER BY created_at",
-        (story_id,)).fetchall()
-    threads = deps.conn.execute(
-        "SELECT id, description, planted_chapter, resolved_chapter, status"
-        " FROM plot_threads WHERE story_id=? ORDER BY planted_chapter",
-        (story_id,)).fetchall()
-    facts = deps.conn.execute(
-        "SELECT f.type, f.content, f.chapter_established, f.confidence"
-        " FROM facts f"
-        " WHERE f.story_id=? AND f.branch_id=? AND f.status!='rejected'"
-        "   AND NOT EXISTS ("
-        "     SELECT 1 FROM facts g"
-        "     WHERE g.prev_version_id = f.id AND g.branch_id = f.branch_id)"
-        " ORDER BY f.chapter_established DESC, f.rowid DESC LIMIT 300",
-        (story_id, branch)).fetchall()
-    outline = deps.conn.execute(
-        "SELECT content FROM outlines WHERE story_id=? AND status='confirmed'"
-        " ORDER BY version_no DESC LIMIT 1", (story_id,)).fetchone()
-    # 实体图(ADR-0015):active 条目 + 链接(带双方名字,前端直接渲染)
-    entities = deps.conn.execute(
-        "SELECT id, type, name, content, chapter_no FROM entities"
-        " WHERE story_id=? AND status='active' ORDER BY COALESCE(chapter_no, 0), created_at",
-        (story_id,)).fetchall()
-    links = deps.conn.execute(
-        "SELECT l.relation, l.chapter_no, ef.name AS from_name, et.name AS to_name"
-        " FROM entity_links l"
-        " JOIN entities ef ON ef.id = l.from_entity"
-        " JOIN entities et ON et.id = l.to_entity"
-        " WHERE l.story_id=? ORDER BY COALESCE(l.chapter_no, 0)", (story_id,)).fetchall()
-    return {
-        "characters": [dict(r) for r in characters],
-        "plot_threads": [dict(r) for r in threads],
-        "facts": [dict(r) for r in facts],
-        "entities": [dict(r) for r in entities],
-        "entity_links": [dict(r) for r in links],
-        "outline": outline["content"] if outline else None,
-    }
+    return q.codex(story_id, q.main_branch(story_id))
 
 
 @router.post("/stories/{story_id}/directive")
@@ -270,8 +206,5 @@ def post_directive(story_id: str, req: DirectiveRequest,
     require_story(deps.conn, story_id, user)
     if req.text.strip():
         deps.record_directive(story_id, req.text.strip())
-    n = deps.conn.execute(
-        "SELECT COUNT(*) c FROM user_directives WHERE story_id=? AND consumed_at IS NULL",
-        (story_id,),
-    ).fetchone()["c"]
-    return {"ok": True, "pending": n}
+    return {"ok": True,
+            "pending": StoryQueries(deps.conn).pending_directive_count(story_id)}

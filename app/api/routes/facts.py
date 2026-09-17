@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.api.deps import engine, locked
 from app.auth import AuthUser, get_current_user, story_role, visible_story_ids
+from app.infrastructure.queries import ReviewQueues
 
 router = APIRouter()
 
@@ -23,12 +24,7 @@ def pending_facts(user: AuthUser = Depends(get_current_user)):
     ids = visible_story_ids(deps.conn, user)
     if not ids:
         return []
-    marks = ",".join("?" * len(ids))
-    rows = deps.conn.execute(
-        "SELECT f.*, s.title AS story_title FROM facts f JOIN stories s ON s.id=f.story_id"
-        f" WHERE f.status='pending_review' AND f.story_id IN ({marks})"
-        " ORDER BY f.created_at", ids).fetchall()
-    return [dict(r) for r in rows]
+    return ReviewQueues(deps.conn).pending_facts(ids)
 
 
 @router.post("/facts/{fact_id}/review")
@@ -37,15 +33,11 @@ def review_fact(fact_id: str, req: FactReview,
                 user: AuthUser = Depends(get_current_user)):
     """审核裁决:校验该 fact 所属 story 在当前用户可见集合内(防跨租户审核)。"""
     deps, _ = engine()
-    fact = deps.conn.execute(
-        "SELECT story_id FROM facts WHERE id=?", (fact_id,)).fetchone()
-    if fact is None or story_role(deps.conn, fact["story_id"], user) is None:
+    q = ReviewQueues(deps.conn)
+    story_id = q.fact_story_id(fact_id)
+    if story_id is None or story_role(deps.conn, story_id, user) is None:
         raise HTTPException(404, "pending fact not found")
     new_status = "confirmed" if req.approve else "rejected"
-    cur = deps.conn.execute(
-        "UPDATE facts SET status=? WHERE id=? AND status='pending_review'",
-        (new_status, fact_id))
-    deps.conn.commit()
-    if cur.rowcount == 0:
+    if q.decide_fact(fact_id, new_status) == 0:
         raise HTTPException(404, "pending fact not found")
     return {"fact_id": fact_id, "status": new_status}
