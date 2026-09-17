@@ -1,7 +1,7 @@
 # 后端解耦重构方案(ADR-0030 配套方案稿)
 
-状态:施工中(2026-09-17 拍板"先重构",功能线——数据飞轮 P0、分卷大纲
-②③ 方案——排队等待)。本文档随各阶段完成更新进度标记。
+状态:五阶段全部完成(2026-09-17 拍板"先重构",当日交付;功能线——
+数据飞轮 P0、分卷大纲②③ 方案——恢复排队)。本文档随各阶段完成更新进度标记。
 
 ## 一、诊断:六笔解耦债(2026-09-16 实测口径)
 
@@ -69,7 +69,7 @@ StylePolicy/FailureLedger/FinalizeUoW),全项目仅装配点(composition root)
 | 1 main.py 拆分 | routes/ 域模块 + sse.py + api/deps.py;预算闸门下沉 RunService | 1-2 天 | ✅ 完成 |
 | 2 Deps 拆解 | ports 先立,Deps 变兼容门面,组件落 app/infrastructure | 2-3 天 | ✅ 完成 |
 | 3 SQL 收敛 | api 层内联 SQL → infrastructure/queries.py 四域读模型;定稿 UoW 由阶段2 FinalizeStore 达成(端口+单事务,落位 infrastructure 而非 application——纯 DB 事务无业务规则,不再建转发层) | 2-3 天 | ✅ 完成 |
-| 4 build.py 三分 | wiring / routes / nodes 分离 | 1-2 天 | 待开工 |
+| 4 build.py 三分 | nodes(节点薄壳)/ routes(纯谓词)/ wiring(纯接线),build.py 变兼容转发 | 1-2 天 | ✅ 完成 |
 
 锚点测试:阶段1 test_api/test_run_state;阶段2 全量+test_supervisor_feedback;
 阶段3 test_data_integrity/test_db;阶段4 test_graph_e2e。
