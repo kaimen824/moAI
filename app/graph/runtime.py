@@ -34,7 +34,7 @@ def _now() -> str:
 
 
 # ---- 运行上下文(ADR-0023)----
-# 每 run 的归属信息(thread_id=story_id, run_id)。_sse_run 的 worker 线程入口
+# 每 run 的归属信息(thread_id=story_id, run_id)。api/sse.py 的 worker 线程入口
 # set;节点/fan-out 线程(LangGraph 并行节点实测继承 ContextVar)与 LLM 回调
 # 经 emit() 兜底读取——多 story 并发时事件不再串台到"最近启动的 run"。
 run_ctx: contextvars.ContextVar = contextvars.ContextVar("novel_run_ctx", default=None)

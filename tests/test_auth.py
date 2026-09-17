@@ -34,7 +34,7 @@ def anon_client(tmp_path):
     main.install_engine(deps, conn, build_graph(deps, checkpointer=deps.checkpointer))
     with TestClient(main.app) as c:
         yield c, deps
-    main._engine, main._graph = None, None
+    main.reset_engine()
 
 
 def test_unauthenticated_requests_rejected(anon_client):

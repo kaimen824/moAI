@@ -35,7 +35,7 @@ def test_restart_recovery_full_flow(tmp_path):
             run_until(c, f"/stories/{sid}/generate", {"target_chapters": 1},
                       "confirm_master_outline")
     finally:
-        main._engine, main._graph = None, None   # "进程死亡":内存态全部失效
+        main.reset_engine()   # "进程死亡":内存态全部失效
 
     # 重启:同 db 重建引擎(启动收敛跑过;waiting 行必须保留)
     deps2, conn2 = build_engine(tmp_path / "restart.db", llm=facade)
@@ -60,7 +60,7 @@ def test_restart_recovery_full_flow(tmp_path):
                 "SELECT COUNT(*) c FROM chapters WHERE story_id=? AND status='active'",
                 (sid,)).fetchone()["c"] == 1
     finally:
-        main._engine, main._graph = None, None
+        main.reset_engine()
 
 
 # ---------- 双 story 并发 ----------

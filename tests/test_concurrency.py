@@ -29,7 +29,7 @@ def client(tmp_path):
     with TestClient(main.app) as c:
         c.headers.update({"Authorization": f"Bearer {login(c)}"})
         yield c, deps
-    main._engine, main._graph = None, None
+    main.reset_engine()
     with main._active_lock:
         main._active.clear()
 

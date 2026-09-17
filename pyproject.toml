@@ -26,11 +26,12 @@ addopts = "-q"
 root_package = "app"
 
 [[tool.importlinter.contracts]]
-name = "Layered architecture (api -> graph -> memory -> db; core at bottom)"
+name = "Layered architecture (api -> graph -> application -> memory -> db; core at bottom)"
 type = "layers"
 layers = [
     "app.api",
     "app.graph",
+    "app.application",
     "app.memory",
     "app.db",
     "app.core",
