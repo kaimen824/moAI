@@ -741,3 +741,17 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
   工具执行卡/Enter 发送 Shift+Enter 换行,替换原"指示…"折叠入口)。
   155 测试绿(新增 test_chat.py 五用例:ReAct 循环/工具链还原/坏参数
   回填/步数上限/401)+ 契约 KEPT。
+- **P1 第一块:ReAct 独占节点 revamp_chapter(2026-09-17,所有者拍板
+  功能与追溯语义 b)**:重构已定稿章——工具组装输入(作者意见+原文进
+  chapter_brief)→ update_state(as_node="chapter_slice") 写回 → sse_run
+  (None, subscribe=False, fresh=False) 触发后台续跑,写作/三评审/人审/
+  定稿全走既有图,一键模式零改动。门禁:工具表只挂 chat 端点 + revamp
+  字段只在工具写回时存在(route_next 短路 END、finalize 计数不增、
+  commit_finalize 旧版归档+新版 version_no+1 挂 prev_version_id 链,
+  复用 R2 章节版本化)。冲突标注(拍板 b):人审卡前 sse worker 调
+  run_conflict_check(REVIEWER,重写稿对照 N+1 起各章开头,JSON 清单
+  {chapter_no, conflict, suggest}),坏 JSON 降级 None 不阻断——标注是
+  辅助不是闸门;作者逐章决定是否再 revamp。NodeRunner(graph 层,
+  graph_provider/launcher 由 api 装配注入,本模块零 api 依赖)是后续
+  生成型/裁决型节点工具的扩展点。159 测试绿(test_revamp.py 四用例:
+  端到端落库挂链/守卫不触发/冲突解析与降级/无后续章)+ 契约 KEPT。

@@ -17,9 +17,17 @@ from app.api.deps import engine
 from app.application.chat_service import ChatService
 from app.auth import AuthUser, get_current_user, require_story
 from app.core.config import get_settings
+from app.graph.noderunner import NodeRunner
 from app.infrastructure.chat_store import ChatStore
 
 router = APIRouter(tags=["chat"])
+
+
+def _launcher(story_id: str, user_id: str):
+    """ReAct 工具触发续跑:只起 worker,事件走既有广播(时间线可见)。"""
+    from app.api.sse import sse_run
+    return sse_run(None, thread_id=story_id, user_id=user_id,
+                   subscribe=False, fresh=False)
 
 
 class ChatRequest(BaseModel):
@@ -31,8 +39,12 @@ def chat(story_id: str, req: ChatRequest,
          user: AuthUser = Depends(get_current_user)):
     deps, _ = engine()
     require_story(deps.conn, story_id, user)
-    # LLM 经引擎注入(deps.llm):测试回放与模型路由共用同一入口
-    service = ChatService(deps, deps.llm, get_settings().log_dir / "chat")
+    # LLM 经引擎注入(deps.llm):测试回放与模型路由共用同一入口;
+    # NodeRunner(graph 层)在此装配——graph_provider/launcher 都依赖 api 单例
+    from app.api.deps import _graph
+    runner = NodeRunner(deps, _graph, _launcher)
+    service = ChatService(deps, deps.llm, get_settings().log_dir / "chat",
+                          runner=runner)
 
     def gen():
         for evt in service.run_turn(story_id, user.id, req.message):

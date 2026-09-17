@@ -42,9 +42,12 @@ def _clip(text: str, limit: int = _OBS_CLIP) -> str:
 class ChatToolbox:
     """P0 工具箱:查询 / 流程状态 / 指令通道。执行异常作为观察回填。"""
 
-    def __init__(self, deps, conn, story_id: str) -> None:
+    def __init__(self, deps, conn, story_id: str,
+                 user_id: str = "", runner=None) -> None:
         self._deps = deps
         self._story_id = story_id
+        self._user_id = user_id
+        self._runner = runner     # graph 层 NodeRunner(P1 装配注入;None 则不挂)
         self._stories = StoryQueries(conn)
         self._obs = ObservabilityQueries(conn)
 
@@ -105,11 +108,18 @@ class ChatToolbox:
         self._deps.request_stop(self._story_id)
         return "停止请求已发出:若生成正在运行,当前步骤收尾后停止(断点保留,可续跑)"
 
+    def revamp_chapter(self, chapter_no, feedback: str) -> str:
+        """重构已定稿章(ReAct 独占,ADR-0031 P1);冲突标注随人审卡返回。"""
+        if self._runner is None:
+            return "重构章节功能未启用"
+        return self._runner.revamp_chapter(self._story_id, self._user_id,
+                                           chapter_no, feedback)
+
     # ---- 注册表 ----
 
     def registry(self) -> list[dict]:
         """(name, description, parameters, handler) 列表。"""
-        return [
+        tools = [
             ("query_book_detail", "查询书籍概览:标题/类型/章节列表/角色/伏笔台账摘要", {}, self.query_book_detail),
             ("query_chapter", "查询单章定稿内容", {"chapter_no": {"type": "integer", "description": "章节号"}}, self.query_chapter),
             ("query_codex", "查询设定集(Codex):角色卡/伏笔/有效事实/实体图/大纲节选", {}, self.query_codex),
@@ -118,6 +128,15 @@ class ChatToolbox:
             ("record_directive", "记录作者的创作指令,下一次生成时生效", {"content": {"type": "string", "description": "指令内容"}}, self.record_directive),
             ("stop_run", "请求停止当前生成(协作式停止,断点保留)", {}, self.stop_run),
         ]
+        if self._runner is not None:
+            tools.append((
+                "revamp_chapter",
+                "重构一篇已定稿的历史章节(按作者意见重写,走完整评审,完成后等作者确认;"
+                "一键生成运行期间不可用)",
+                {"chapter_no": {"type": "integer", "description": "要重构的章节号(已定稿)"},
+                 "feedback": {"type": "string", "description": "作者的修订意见"}},
+                self.revamp_chapter))
+        return tools
 
     def schemas(self) -> list[dict]:
         return [{"type": "function", "function": {"name": n, "description": d, "parameters": {"type": "object", "properties": p, "required": list(p)}}}
@@ -147,11 +166,13 @@ class ChatService:
     reply / error。每一步写 ChatTraceLog(JSONL,全文)与 chat_messages 表。
     """
 
-    def __init__(self, deps, llm: LLMFacade, log_dir, stories_conn=None) -> None:
+    def __init__(self, deps, llm: LLMFacade, log_dir, stories_conn=None,
+                 runner=None) -> None:
         self._deps = deps
         self._llm = llm
         self._trace = ChatTraceLog(log_dir)
         self._max_steps = get_settings().chat_max_steps
+        self._runner = runner   # graph 层 NodeRunner(注则挂 revamp_chapter 工具)
         # 测试可注入独立 conn;缺省用引擎连接
         self._conn = stories_conn if stories_conn is not None else deps.conn
 
@@ -161,7 +182,8 @@ class ChatService:
         turn_id = uuid.uuid4().hex[:12]
         started = time.perf_counter()
         store = ChatStore(self._conn)
-        toolbox = ChatToolbox(self._deps, self._conn, story_id)
+        toolbox = ChatToolbox(self._deps, self._conn, story_id,
+                              user_id=user_id, runner=self._runner)
 
         self._trace.log(story_id, {
             "event": "user_message", "turn_id": turn_id, "user_id": user_id,

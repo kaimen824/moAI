@@ -43,6 +43,10 @@ def route_after_review(state: GraphState) -> str:
 
 
 def route_next(state: GraphState) -> str:
+    # ReAct 重构历史章(ADR-0031 P1):定稿即终点——revamp 只覆盖一章,
+    # 不进入下一章生产循环;标记由 next_chapter 兜底清理
+    if state.get("revamp_pending") or state.get("revamp_done"):
+        return END
     if state.get("chapters_done", 0) >= state.get("target_chapters", 1):
         return END
     return "next_chapter"

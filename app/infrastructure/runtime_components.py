@@ -754,14 +754,37 @@ class SqliteFinalizeStore:
         try:
             self._deps.run_lock.acquire()   # 显式事务:跨越整个 BEGIN..COMMIT 的临界区
             conn.execute("BEGIN")
-            # 1) 章节(active)
-            conn.execute(
-                "INSERT INTO chapters (id, story_id, chapter_no, version_no, title, content,"
-                " status, branch_id, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (chapter_id, story_id, chapter_no, 1,
-                 f"第{chapter_no}章", state.get("draft", ""), "active", branch, _now(), _now()),
-            )
+            # 1) 章节(active);revamp 轮(ADR-0031 P1):旧版归档,新版
+            #    INSERT(version_no+1、prev_version_id 挂链)——R2 章节版本化
+            #    天然承载"重构历史章",旧版可回溯
+            if state.get("revamp_pending"):
+                old = conn.execute(
+                    "SELECT id, version_no FROM chapters"
+                    " WHERE story_id=? AND chapter_no=? AND status='active'"
+                    " ORDER BY version_no DESC LIMIT 1",
+                    (story_id, chapter_no)).fetchone()
+                if old is None:
+                    raise ValueError(
+                        f"revamp 目标章不存在:story={story_id} chapter={chapter_no}")
+                conn.execute(
+                    "UPDATE chapters SET status='archived', updated_at=? WHERE id=?",
+                    (_now(), old["id"]))
+                chapter_id = uuid.uuid4().hex
+                conn.execute(
+                    "INSERT INTO chapters (id, story_id, chapter_no, version_no,"
+                    " prev_version_id, title, content, status, branch_id, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (chapter_id, story_id, chapter_no, old["version_no"] + 1, old["id"],
+                     f"第{chapter_no}章", state.get("draft", ""), "active", branch,
+                     _now(), _now()))
+            else:
+                conn.execute(
+                    "INSERT INTO chapters (id, story_id, chapter_no, version_no, title, content,"
+                    " status, branch_id, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (chapter_id, story_id, chapter_no, 1,
+                     f"第{chapter_no}章", state.get("draft", ""), "active", branch, _now(), _now()),
+                )
             # 2) facts + visibility(精确去重:同分支同内容已存在则跳过)
             fact_ids: list[str] = []
             for i, f in enumerate(changes.get("facts", [])):

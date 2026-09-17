@@ -56,6 +56,10 @@ class GraphState(TypedDict, total=False):
     character_intents: list[dict]  # 在场角色意图(ADR-0017:goal/knows/doesnt_know/self_interest)
     chapter_id: str
 
+    # ---- ReAct 独占:重构历史章节(ADR-0031 P1,ChatDock 工具通道)----
+    revamp_pending: bool          # 本轮 finalize 是覆盖旧章(计数不增,END 停止)
+    revamp_done: bool             # 重构轮已完成(路由短路 END 的冗余旗标)
+
     # ---- 中断恢复的用户输入 ----
     user_input: Any
     error: str

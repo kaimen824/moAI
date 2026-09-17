@@ -45,17 +45,24 @@ def _extract_payload(update: dict | None) -> dict:
     return out
 
 
-def sse_run(graph_input: Any, thread_id: str, user_id: str = "") -> StreamingResponse:
-    """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。"""
+def sse_run(graph_input: Any, thread_id: str, user_id: str = "",
+            *, subscribe: bool = True, fresh: bool = True):
+    """worker 线程跑图,事件按 thread 广播(多订阅+历史);本响应为主订阅。
+
+    subscribe=False(ReAct 工具触发续跑,ADR-0031 P1):只起 worker 不建
+    订阅——返回 None,事件照常广播给既有订阅者(工作台时间线可见)。
+    fresh=False:保留事件历史(revamp 是本轮延续,时间线不清零)。
+    """
     deps, _ = engine()
     from app.graph.runtime import StopRequested, run_ctx, user_ctx
     with _active_lock:
         if thread_id in _active:
             raise HTTPException(409, "story run already active")
         _active.add(thread_id)
-    deps.clear_events(thread_id)        # 新一轮生成:该 thread 历史从零
+    if fresh:
+        deps.clear_events(thread_id)        # 新一轮生成:该 thread 历史从零
     deps.clear_stop(thread_id)          # 新一轮运行清除上一轮的中断请求
-    q = deps.subscribe(thread_id)
+    q = deps.subscribe(thread_id) if subscribe else None
     run_id = uuid.uuid4().hex
     cfg = {"configurable": {"thread_id": thread_id},
            # 硬兜底:任何未预见的图循环超步数即抛错(单章全流程约 20 步,
@@ -82,14 +89,24 @@ def sse_run(graph_input: Any, thread_id: str, user_id: str = "") -> StreamingRes
                 for node, update in chunk.items():
                     if node == "__interrupt__":
                         intr = update[0]
-                        deps.emit("interrupt", intr.value, thread_id)
+                        payload = intr.value
+                        # revamp 轮(ADR-0031 P1,拍板 b):章节人审卡附冲突
+                        # 标注——重写稿对照后续章找矛盾,供作者逐章决定重写
+                        if (isinstance(payload, dict)
+                                and payload.get("type") == "user_review_chapter"):
+                            snap_values = _graph.get_state(cfg).values or {}
+                            if snap_values.get("revamp_pending"):
+                                from app.graph.noderunner import run_conflict_check
+                                payload = {**payload, "conflict_report":
+                                           run_conflict_check(deps, snap_values)}
+                        deps.emit("interrupt", payload, thread_id)
                         # waiting + 完整 payload 落库:跨重启中断卡可还原(前端不再丢卡)
                         deps.set_run_state(
                             thread_id, status="waiting",
-                            interrupt_type=(intr.value.get("type")
-                                            if isinstance(intr.value, dict) else None),
+                            interrupt_type=(payload.get("type")
+                                            if isinstance(payload, dict) else None),
                             interrupt_payload=json.dumps(
-                                intr.value, ensure_ascii=False, default=str))
+                                payload, ensure_ascii=False, default=str))
                         return
                     deps.emit("stage", {"node": node, "payload": _extract_payload(update)},
                               thread_id)
@@ -121,7 +138,7 @@ def sse_run(graph_input: Any, thread_id: str, user_id: str = "") -> StreamingRes
             deps.clear_stop(thread_id)
 
     threading.Thread(target=worker, daemon=True).start()
-    return sse_response(deps, q)
+    return sse_response(deps, q) if subscribe else None
 
 
 def sse_response(deps, q) -> StreamingResponse:

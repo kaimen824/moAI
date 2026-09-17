@@ -223,8 +223,14 @@ def merge_reviews(state: GraphState, deps: Deps) -> dict:
 
 
 def finalize(state: GraphState, deps: Deps) -> dict:
-    """定稿管道(编排原子性):抽取 -> 角色更新 -> 摘要 -> 单事务落库。"""
+    """定稿管道(编排原子性):抽取 -> 角色更新 -> 摘要 -> 单事务落库。
+
+    revamp 轮(ReAct 重构历史章,ADR-0031 P1):覆盖旧章,chapters_done
+    不增——章数没变,只是某章换了新版本(旧版归档可回溯)。
+    """
     chapter_id = deps.commit_finalize(state)
+    if state.get("revamp_pending"):
+        return {"chapter_id": chapter_id, "revamp_done": True}
     done = state.get("chapters_done", 0) + 1
     return {"chapter_id": chapter_id, "chapters_done": done}
 
@@ -238,7 +244,8 @@ def next_chapter(state: GraphState, deps: Deps) -> dict:
     done = state.get("chapters_done", 0)
     stage_end = state.get("stage_end_chapter", 0)
     is_stage_first = (done + 1 > stage_end) or not state.get("stage_outline")
-    reset = {"rewrite_count": 0, "rewrite_exhausted": False}
+    reset = {"rewrite_count": 0, "rewrite_exhausted": False,
+             "revamp_pending": False, "revamp_done": False}   # revamp 标记不跨章残留
     if is_stage_first:
         reset["stage_regen_count"] = 0          # 新阶段:细纲轮次重新计
     return {"chapter_no": done + 1, "is_stage_first": is_stage_first, **reset}
