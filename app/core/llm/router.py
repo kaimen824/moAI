@@ -51,12 +51,15 @@ class ModelRouter:
         model = self._settings.model_for(role)
         # key 可用性优先于模型名前缀:百炼(DashScope)聚合了 glm/qwen/deepseek
         # 全系模型——只要配了百炼 key,一切模型走百炼;
-        # 无百炼 key 时才按名字落到智谱直连(glm-*)或 openai 兼容。
+        # 无百炼 key 时才按名字落到直连:glm-*->智谱、deepseek-*->官方
+        # (api.deepseek.com,ADR-0033),其余 openai 兼容。
         s = self._settings
         if s.dashscope_api_key:
             provider = "dashscope"
         elif model.startswith("glm") and s.glm_api_key:
             provider = "glm"
+        elif model.startswith("deepseek") and s.deepseek_api_key:
+            provider = "deepseek"
         else:
             provider = resolve_provider(model)
         return Route(

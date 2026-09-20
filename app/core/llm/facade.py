@@ -47,6 +47,7 @@ class LLMFacade:
             self._factory = build_default_factory(
                 self._settings.glm_api_key,
                 getattr(self._settings, "dashscope_api_key", ""),
+                getattr(self._settings, "deepseek_api_key", ""),
             )
         return self._factory
 

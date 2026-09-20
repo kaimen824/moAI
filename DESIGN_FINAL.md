@@ -785,3 +785,17 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
   166 测试绿(新增 test_story_delete.py 七用例:全端点 404/幂等/权限
   矩阵/admin 跨删/运行中 409/观测清除与子表留痕/审核队列过滤)+
   契约 KEPT。
+
+**ADR-0033 DeepSeek 官方 API provider(2026-09-20)**:诊断——deepseek 系模型
+此前仅经百炼聚合调用,无官方直连通道。机制(ADR-0012 扩展点标准用法):
+- DeepSeekFamily(OpenAICompatFamily 子类,name="deepseek",
+  base_url=https://api.deepseek.com);DEEPSEEK_API_KEY 环境变量,配了
+  key 才注册进工厂。官方 OpenAI 兼容,零新客户端代码。
+- 路由优先级保持不变:百炼 key 在 -> 全走百炼(现状零变化);无百炼
+  key 时 deepseek-* 且有官方 key -> 直连官方;glm-*/其余分支不动。
+- **模型名差异**(部署须知的坑):官方名是 deepseek-chat(通用)/
+  deepseek-reasoner(推理),不是百炼的 deepseek-v3——走官方时用
+  MODEL__<ROLE> 或前端配置页指定官方名。
+- 待拍板(不阻塞):deepseek 系是否改为"专属 key 优先于百炼聚合"
+  (现状:配了百炼 key 则官方 key 不生效)。改了即影响 7 个中/便宜
+  角色的后端归属与计费,所有者定。
