@@ -64,12 +64,17 @@ def test_deepseek_official_key_routes_direct(monkeypatch, isolated_settings):
     assert ModelRouter().route(AgentRole.WRITER).provider == "dashscope"
 
 
-def test_dashscope_key_still_wins_over_deepseek_direct(monkeypatch, isolated_settings):
-    """百炼 key 在:deepseek-* 仍走百炼聚合(现状零变化;专属优先待拍板)。"""
+def test_deepseek_direct_wins_over_bailian(monkeypatch, isolated_settings):
+    """专属优先(ADR-0033,2026-09-20 拍板):官方 key 在,deepseek-* 直连
+    官方,即使百炼 key 也配了;glm/qwen/MiniMax 系不受影响仍走百炼。"""
     from app.core.config import get_settings
     s = get_settings()
     monkeypatch.setattr(s, "dashscope_api_key", "sk-bailian", raising=False)
     monkeypatch.setattr(s, "deepseek_api_key", "sk-ds", raising=False)
+    assert ModelRouter().route(AgentRole.SUMMARY).provider == "deepseek"
+    assert ModelRouter().route(AgentRole.WRITER).provider == "dashscope"   # glm-5 经百炼
+    # deepseek-* 无官方 key:回落百炼聚合
+    monkeypatch.setattr(s, "deepseek_api_key", "", raising=False)
     assert ModelRouter().route(AgentRole.SUMMARY).provider == "dashscope"
 
 

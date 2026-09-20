@@ -796,6 +796,10 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
 - **模型名差异**(部署须知的坑):官方名是 deepseek-chat(通用)/
   deepseek-reasoner(推理),不是百炼的 deepseek-v3——走官方时用
   MODEL__<ROLE> 或前端配置页指定官方名。
-- 待拍板(不阻塞):deepseek 系是否改为"专属 key 优先于百炼聚合"
-  (现状:配了百炼 key 则官方 key 不生效)。改了即影响 7 个中/便宜
-  角色的后端归属与计费,所有者定。
+- **专属优先(2026-09-20 所有者提供 key 并委托拍板)**:deepseek-* 配了
+  官方 key 即直连,优先于百炼聚合;glm/qwen/MiniMax 系不受影响仍走百炼。
+  部署配置同步:六个中/便宜角色(EVENT/CHARACTER/ENTITY/POLISH/SUMMARY/
+  THREAD)显式指到 deepseek-chat——ENTITY/POLISH/THREAD 此前用代码默认
+  deepseek-v3,切官方后该名会 400,必须在 .env 显式覆盖。reasoner
+  (推理版)未用:这些角色全是结构化抽取/摘要任务。key 经真实最小调用
+  验证有效。
