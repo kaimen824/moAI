@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import _active, engine, locked
 from app.api.sse import resume_command, sse_run
 from app.application.run_service import BudgetExceeded, check_daily_budget
-from app.auth import AuthUser, get_current_user, require_story
+from app.auth import AuthUser, get_current_user, require_story, story_role
 from app.infrastructure.queries import StoryQueries
 
 router = APIRouter()
@@ -168,6 +168,29 @@ def stop(story_id: str, user: AuthUser = Depends(get_current_user)):
     require_story(deps.conn, story_id, user)
     deps.request_stop(story_id)
     return {"ok": True, "active": story_id in _active}
+
+
+@router.delete("/stories/{story_id}")
+@locked
+def delete_story(story_id: str, user: AuthUser = Depends(get_current_user)):
+    """删除书(软删,ADR-0032):书架移除+观测记录清除,章节/设定/checkpoint 保留。
+
+    检查顺序:权限先于运行状态(不向无权者泄露运行中);@locked 与
+    generate/resume 同锁串行,消除 _active 检查与图启动之间的竞态。
+    """
+    deps, _ = engine()
+    role = story_role(deps.conn, story_id, user)   # 含软删过滤:已删即 404
+    if role is None:
+        raise HTTPException(404, "story not found")
+    if role not in ("owner", "admin"):
+        raise HTTPException(403, "only owner or admin can delete a story")
+    if story_id in _active:
+        raise HTTPException(409, "story is running; stop it before deleting",
+                            headers={"X-Error-Code": "story_running"})
+    deleted_at = StoryQueries(deps.conn).soft_delete_story(story_id)
+    if deleted_at is None:
+        raise HTTPException(404, "story not found")
+    return {"ok": True, "deleted_at": deleted_at}
 
 
 @router.get("/stories/{story_id}/chapters/{chapter_no}")

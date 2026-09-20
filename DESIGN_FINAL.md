@@ -755,3 +755,33 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
   graph_provider/launcher 由 api 装配注入,本模块零 api 依赖)是后续
   生成型/裁决型节点工具的扩展点。159 测试绿(test_revamp.py 四用例:
   端到端落库挂链/守卫不触发/冲突解析与降级/无后续章)+ 契约 KEPT。
+
+**ADR-0032 书籍删除·软删除(2026-09-20,所有者拍板四决策)**:背景——书架
+此前无任何删除能力(全库无 DELETE)。决策与机制:
+- **软删除语义**:migration v9 给 stories 补 deleted_at(TEXT,NULL=在架);
+  子表(chapters/outlines/facts/entities/chat_messages 等全部 FK 表)与
+  LangGraph checkpoint(thread_id=story_id)、story_run_state 全保留——
+  waiting 中断卡留待未来"恢复/彻底删除"端点(本期不做)。
+- **观测表物理清除例外**:usage_log/agent_traces/review_results/
+  retrieval_audit/llm_failures 五表只有 story_id 无 FK,属过程遥测,
+  拍板随删物理清除(书删即不再计入跨书统计);与 soft_delete 同一显式
+  事务(BEGIN..COMMIT,isolation_level=None 下手工管理)。
+- **权限 owner+admin**:DELETE /stories/{id} 检查顺序 story_role(None→
+  404 不泄露存在性,含软删过滤)→ 非 owner/admin 403(editor/viewer 同)
+  → _active 运行中 409(X-Error-Code: story_running,先停止再删)→
+  soft_delete_story rowcount=0 兜底 404(防并发双删)。@locked 与
+  generate/resume 同锁串行,消除 _active 检查与图启动的 TOCTOU。
+- **读路径收口**(其余 18 个 story 级端点零改动,require_story 统一 404):
+  auth.story_role 两分支 + visible_story_ids 两分支(审核队列不再出现
+  软删书 pending 项)+ queries.list_for_user/story_row/main_branch(纵深
+  防御)+ ops_stats 等待中断/错误 run 两计数过滤(软删书 run_state 行
+  保留但不污染运营口径)。响应 200+{"ok","deleted_at"} 而非 204:
+  前端 j() 封装假定 JSON body,跟随 stop 端点先例。
+- **已知权衡**:chat 回合不持引擎锁(ADR-0031 既有口径),已在流的对话
+  可在软删提交后经 NodeRunner 为已删书起 run——窗口窄、后果轻(写进的
+  章节数据本就保留、读路径全过滤),不在 sse_run 层加校验。
+- **实施结果**:ddl v9 + auth 收口 + queries 读过滤/soft_delete_story +
+  DELETE 端点 + 前端书架垃圾桶(AlertDialog 确认,409 内联文案)。
+  166 测试绿(新增 test_story_delete.py 七用例:全端点 404/幂等/权限
+  矩阵/admin 跨删/运行中 409/观测清除与子表留痕/审核队列过滤)+
+  契约 KEPT。

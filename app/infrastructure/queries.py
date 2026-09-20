@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 
 class StoryQueries:
-    """小说域 UI 读模型:列表/详情/章节/Codex/指令计数。"""
+    """小说域 UI 读模型:列表/详情/章节/Codex/指令计数 + 写侧软删除(ADR-0032)。"""
 
     def __init__(self, conn) -> None:
         self.conn = conn
@@ -25,14 +25,17 @@ class StoryQueries:
             "SELECT s.*, (SELECT COUNT(*) FROM chapters c"
             "  WHERE c.story_id = s.id AND c.status='active') AS chapter_count"
             " FROM stories s"
-            " WHERE s.owner_id=? OR s.id IN"
-            "   (SELECT story_id FROM story_members WHERE user_id=?)"
+            " WHERE (s.owner_id=? OR s.id IN"
+            "   (SELECT story_id FROM story_members WHERE user_id=?))"
+            "   AND s.deleted_at IS NULL"
             " ORDER BY s.created_at DESC", (user_id, user_id)).fetchall()
         return [dict(r) for r in rows]
 
     def story_row(self, story_id: str):
-        """story 行(generate 组装共创输入/取主分支)。"""
-        return self.conn.execute("SELECT * FROM stories WHERE id=?", (story_id,)).fetchone()
+        """story 行(generate 组装共创输入/取主分支);软删书不可见(ADR-0032)。"""
+        return self.conn.execute(
+            "SELECT * FROM stories WHERE id=? AND deleted_at IS NULL",
+            (story_id,)).fetchone()
 
     def detail(self, story_id: str) -> dict:
         story = self.story_row(story_id)
@@ -107,8 +110,9 @@ class StoryQueries:
         }
 
     def main_branch(self, story_id: str) -> str:
-        row = self.conn.execute("SELECT main_branch_id FROM stories WHERE id=?",
-                                (story_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT main_branch_id FROM stories WHERE id=? AND deleted_at IS NULL",
+            (story_id,)).fetchone()
         return row["main_branch_id"] if row else ""
 
     def pending_directive_count(self, story_id: str) -> int:
@@ -116,6 +120,32 @@ class StoryQueries:
             "SELECT COUNT(*) c FROM user_directives WHERE story_id=? AND consumed_at IS NULL",
             (story_id,),
         ).fetchone()["c"]
+
+    def soft_delete_story(self, story_id: str) -> str | None:
+        """软删除书(ADR-0032):置 deleted_at + 物理清观测表,子表/checkpoint 保留。
+
+        观测表(usage_log/agent_traces/review_results/retrieval_audit/llm_failures)
+        只有 story_id 无 FK,属过程遥测——拍板随删清除,不再计入跨书统计。
+        返回 deleted_at;书不存在或已删返回 None(幂等口径:读路径已 404,
+        此处 rowcount 兜底防并发双删)。
+        """
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.conn.execute("BEGIN")
+        try:
+            cur = self.conn.execute(
+                "UPDATE stories SET deleted_at=?, updated_at=?"
+                " WHERE id=? AND deleted_at IS NULL", (ts, ts, story_id))
+            if cur.rowcount == 0:
+                self.conn.execute("ROLLBACK")
+                return None
+            for table in ("usage_log", "agent_traces", "review_results",
+                          "retrieval_audit", "llm_failures"):
+                self.conn.execute(f"DELETE FROM {table} WHERE story_id=?", (story_id,))
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+        return ts
 
 
 class ReviewQueues:
@@ -251,7 +281,11 @@ class ObservabilityQueries:
         return [dict(r) for r in rows]
 
     def ops_stats(self, since: str) -> dict:
-        """近 24h 运营口径:调用数/失败数/等待中断/错误 run。"""
+        """近 24h 运营口径:调用数/失败数/等待中断/错误 run。
+
+        等待中断/错误 run 只统计在架书:软删书的 story_run_state 行保留
+        (中断卡留待未来恢复功能),但不计入运营口径(ADR-0032)。
+        """
         return {
             "llm_calls": self.conn.execute(
                 "SELECT COUNT(*) n FROM usage_log WHERE created_at>=?",
@@ -261,9 +295,11 @@ class ObservabilityQueries:
                 (since,)).fetchone()["n"],
             "waiting_interruptions": self.conn.execute(
                 "SELECT COUNT(*) n FROM story_run_state WHERE status='waiting'"
+                " AND story_id IN (SELECT id FROM stories WHERE deleted_at IS NULL)"
             ).fetchone()["n"],
             "error_runs": self.conn.execute(
                 "SELECT COUNT(*) n FROM story_run_state WHERE error_code IS NOT NULL"
+                " AND story_id IN (SELECT id FROM stories WHERE deleted_at IS NULL)"
             ).fetchone()["n"],
         }
 

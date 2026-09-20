@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Badge, Button, Card, Flex, Heading, Text, TextField } from '@radix-ui/themes'
-import { BookOpenIcon, PencilSimpleIcon } from '@phosphor-icons/react'
+import {
+  AlertDialog, Badge, Button, Card, Flex, Heading, IconButton, Text, TextField,
+} from '@radix-ui/themes'
+import { BookOpenIcon, PencilSimpleIcon, TrashIcon } from '@phosphor-icons/react'
 import { api } from '../api.js'
 
 /* 书籍 id -> 稳定渐变封面(竖排书名,东方书脊感) */
@@ -13,11 +15,16 @@ function coverStyle(id) {
   }
 }
 
-function BookCover({ story, onOpen }) {
+function BookCover({ story, onOpen, onDelete }) {
   return (
     <Card size="2" variant="classic" className="cover-card anim-in"
-      style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', width: '100%' }}
+      style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', width: '100%', position: 'relative' }}
       onClick={onOpen}>
+      <IconButton size="1" color="red" variant="soft" aria-label="删除本书"
+        style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
+        onClick={e => { e.stopPropagation(); onDelete(story) }}>
+        <TrashIcon size={14} />
+      </IconButton>
       <Flex gap="3" p="3" align="stretch">
         <Flex align="center" justify="center" style={{
           width: 92, minHeight: 128, borderRadius: '6px 2px 2px 6px', flexShrink: 0,
@@ -53,6 +60,9 @@ export default function Library({ onOpen }) {
   const [stories, setStories] = useState([])
   const [title, setTitle] = useState('')
   const [premise, setPremise] = useState('')
+  const [confirm, setConfirm] = useState(null)   // 待删书;null=确认框关闭
+  const [delErr, setDelErr] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   const refresh = () => api.listStories().then(setStories).catch(() => {})
   useEffect(() => { refresh() }, [])
@@ -61,6 +71,21 @@ export default function Library({ onOpen }) {
     if (!title.trim()) return
     const s = await api.createStory(title, premise)
     setTitle(''); setPremise(''); refresh(); onOpen(s.story_id)
+  }
+
+  const doDelete = async (e) => {
+    e.preventDefault()          // 阻止 AlertDialog.Action 默认关闭,失败时留在框内
+    setDeleting(true); setDelErr('')
+    try {
+      await api.deleteStory(confirm.id)
+      setConfirm(null); refresh()
+    } catch (err) {
+      setDelErr(err.message?.startsWith('409')
+        ? '本书正在生成,请先停止运行再删除'
+        : `删除失败:${err.message}`)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -90,11 +115,32 @@ export default function Library({ onOpen }) {
       <Flex gap="3" wrap="wrap">
         {stories.map(s => (
           <div key={s.id} style={{ flex: '1 1 340px', maxWidth: 420 }}>
-            <BookCover story={s} onOpen={() => onOpen(s.id)} />
+            <BookCover story={s} onOpen={() => onOpen(s.id)} onDelete={setConfirm} />
           </div>
         ))}
       </Flex>
       {!stories.length && <Text size="2" color="gray">书架空空,从上一部作品开始</Text>}
+
+      <AlertDialog.Root open={!!confirm}
+        onOpenChange={open => { if (!open) { setConfirm(null); setDelErr('') } }}>
+        <AlertDialog.Content maxWidth="440">
+          <AlertDialog.Title>删除《{confirm?.title}》？</AlertDialog.Title>
+          <AlertDialog.Description size="2">
+            删除后本书从书架移除,用量与调用记录一并清除;章节正文与设定保留在库中,但当前版本暂不支持自助恢复。
+          </AlertDialog.Description>
+          {delErr && <Text size="1" color="red" style={{ display: 'block', marginTop: 8 }}>{delErr}</Text>}
+          <Flex gap="3" justify="end" mt="4">
+            <AlertDialog.Cancel>
+              <Button variant="soft" color="gray" disabled={deleting}>取消</Button>
+            </AlertDialog.Cancel>
+            <AlertDialog.Action>
+              <Button color="red" onClick={doDelete} disabled={deleting}>
+                <TrashIcon size={14} /> 删除
+              </Button>
+            </AlertDialog.Action>
+          </Flex>
+        </AlertDialog.Content>
+      </AlertDialog.Root>
     </Flex>
   )
 }

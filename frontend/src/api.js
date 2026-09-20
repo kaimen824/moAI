@@ -119,6 +119,7 @@ export const api = {
 
   createStory: (title, premise) => j("/stories", { method: "POST", body: JSON.stringify({ title, premise }) }),
   listStories: () => j("/stories"),
+  deleteStory: (id) => j(`/stories/${id}`, { method: "DELETE" }),
   storyDetail: (id) => j(`/stories/${id}`),
   chapter: (id, no) => j(`/stories/${id}/chapters/${no}`),
   generate: (id, payload, onEvent) => sse(`/stories/${id}/generate`, payload, onEvent),

@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS stories (
   main_branch_id TEXT,
   owner_id    TEXT,                            -- 所有者(ADR-0022;存量回填给 admin)
   created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
+  updated_at  TEXT NOT NULL,
+  deleted_at  TEXT                             -- 软删除时间(ADR-0032;NULL=在架)
 );
 
 CREATE TABLE IF NOT EXISTS outlines (
@@ -566,6 +567,21 @@ def _m8_chat_messages(conn) -> None:
         " ON chat_messages(story_id, created_at)")
 
 
+def _m9_story_soft_delete(conn) -> None:
+    """v9:书籍软删除(ADR-0032)——stories 补 deleted_at 时间戳列。
+
+    读路径过滤(auth.story_role 收口),子表与 checkpoint 全保留;
+    全新库 baseline 已含此列,探测后跳过。
+    """
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "stories" not in tables:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(stories)")}
+    if "deleted_at" not in cols:
+        conn.execute("ALTER TABLE stories ADD COLUMN deleted_at TEXT")
+
+
 # (version, name, 执行函数);version 严格递增,migrate() 按序补齐未应用版本。
 MIGRATIONS: list[tuple[int, str, object]] = [
     (2, "legacy_backfill", _m2_legacy_backfill),
@@ -575,6 +591,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (6, "run_state", _m6_run_state),
     (7, "observability", _m7_observability),
     (8, "chat_messages", _m8_chat_messages),
+    (9, "story_soft_delete", _m9_story_soft_delete),
 ]
 
 

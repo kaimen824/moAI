@@ -112,12 +112,19 @@ def get_admin_user(user: AuthUser = Depends(get_current_user)) -> AuthUser:
 
 
 def story_role(conn, story_id: str, user: AuthUser) -> str | None:
-    """当前用户对 story 的角色:owner/member 角色;admin 恒 'admin';无权 None。"""
+    """当前用户对 story 的角色:owner/member 角色;admin 恒 'admin';无权 None。
+
+    软删书(deleted_at 非空,ADR-0032)视为不存在——返回 None,
+    require_story 据此对全部 story 级端点统一 404。
+    """
     if user.is_admin:
-        row = conn.execute("SELECT 1 FROM stories WHERE id=?", (story_id,)).fetchone()
+        row = conn.execute(
+            "SELECT 1 FROM stories WHERE id=? AND deleted_at IS NULL",
+            (story_id,)).fetchone()
         return "admin" if row else None
     row = conn.execute(
-        "SELECT role FROM story_members WHERE story_id=? AND user_id=?",
+        "SELECT m.role FROM story_members m JOIN stories s ON s.id = m.story_id"
+        " WHERE m.story_id=? AND m.user_id=? AND s.deleted_at IS NULL",
         (story_id, user.id)).fetchone()
     return row["role"] if row else None
 
@@ -129,11 +136,17 @@ def require_story(conn, story_id: str, user: AuthUser) -> None:
 
 
 def visible_story_ids(conn, user: AuthUser) -> list[str]:
-    """当前用户可见的 story 集合(admin 全量)——审核队列等跨 story 端点用。"""
+    """当前用户可见的 story 集合(admin 全量)——审核队列等跨 story 端点用。
+
+    软删书(ADR-0032)不可见:其 pending 事实/提案不再进入审核队列。
+    """
     if user.is_admin:
-        rows = conn.execute("SELECT id FROM stories").fetchall()
+        rows = conn.execute(
+            "SELECT id FROM stories WHERE deleted_at IS NULL").fetchall()
     else:
         rows = conn.execute(
-            "SELECT story_id AS id FROM story_members WHERE user_id=?",
+            "SELECT m.story_id AS id FROM story_members m"
+            " JOIN stories s ON s.id = m.story_id"
+            " WHERE m.user_id=? AND s.deleted_at IS NULL",
             (user.id,)).fetchall()
     return [r["id"] for r in rows]
