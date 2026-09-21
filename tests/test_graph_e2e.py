@@ -43,7 +43,9 @@ SCRIPTS: dict[str, str | dict] = {
                              "scores": {"consistency": 9, "structure": 9}, "feedback": "ok"},
     "chapter_slice": "本章要点:暴雨夜的异象与古碑初现,沈砚与白芷同行。",
     "draft": "沈砚在暴雨中前行,身旁的白芷提着一盏昏黄的灯……(正文约一千五百字)",
-    "polish": "沈砚在暴雨中收束了思绪。白芷提灯走在他的左侧,雨幕把两人的影子叠在一处。(精校后的正文)",
+    # 精校 = 局部替换编辑工具(ADR-0038):回放一条命中编辑(失配/重试/兜底
+    # 场景由 test_polish_edit_tool 专测,共享脚本只走正常路径保调用计数)
+    "polish": {"edits": [{"find": "昏黄的灯", "replace": "暖黄的灯"}]},
     "review_draft_outline": {"verdict": "pass",
                              "scores": {"consistency": 9, "fidelity": 9}, "feedback": "ok"},
     "review_quality": {"verdict": "pass",
@@ -596,6 +598,11 @@ def test_polish_budget_exhaustion_style_gate(tmp_path):
             return R(content=_json.dumps(STYLE_REVISE, ensure_ascii=False), model="fake")
         if stage == "review_draft_outline":
             return R(content=_json.dumps(STRUCT_PASS, ensure_ascii=False), model="fake")
+        if stage == "polish":
+            # 精校回放:无需修改(原稿直返)——恒 revise 场景下每轮编辑目标
+            # 会被上一轮改掉,固定 find 回放会触发失配重试+全文兜底烧调用;
+            # 本测试只验证闸门计数,编辑工具行为由 test_polish_edit_tool 专测
+            return R(content='{"edits":[]}', model="fake")
         val = SCRIPTS.get(stage)
         if val is None:
             return None

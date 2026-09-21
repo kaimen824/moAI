@@ -53,6 +53,18 @@ class ReviewVerdict(BaseModel):
     feedback: str = ""
 
 
+# ---- 精校编辑工具(ADR-0038:部分替换,治全文重掷)----
+
+class PolishEdit(BaseModel):
+    """单条局部替换:find 必须是草稿中逐字精确且唯一的连续片段。"""
+    find: str = Field(min_length=2)
+    replace: str = ""
+
+
+class PolishEdits(BaseModel):
+    edits: list[PolishEdit] = Field(default_factory=list)
+
+
 # ---- 伏笔评审(thread_reviewer,ADR-0020/0025)----
 
 class ThreadChange(BaseModel):
