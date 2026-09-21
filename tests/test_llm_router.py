@@ -106,3 +106,23 @@ def test_deepseek_thinking_toggle(monkeypatch, isolated_settings):
     client2 = build_default_factory(glm_api_key="k", deepseek_api_key="sk-ds") \
         .chat_client("deepseek")
     assert client2._body() is None
+
+
+def test_deepseek_thinking_role_whitelist(monkeypatch, isolated_settings):
+    """ADR-0037:白名单角色路由 deepseek_think(恢复思考),即使全局关思考;
+    非白名单仍走 deepseek(关思考)。"""
+    from app.core.config import AgentRole as AR, get_settings
+    from app.core.llm.factory import build_default_factory
+    s = get_settings()
+    monkeypatch.setenv("MODEL__REVIEWER", "deepseek-chat")   # 白名单角色用 deepseek 模型
+    monkeypatch.setattr(s, "deepseek_api_key", "sk-ds", raising=False)
+    monkeypatch.setattr(s, "dashscope_api_key", "", raising=False)
+    monkeypatch.setattr(s, "deepseek_disable_thinking", True, raising=False)
+    monkeypatch.setattr(s, "deepseek_thinking_roles", "REVIEWER,OUTLINE",
+                        raising=False)
+    assert ModelRouter().route(AR.REVIEWER).provider == "deepseek_think"
+    assert ModelRouter().route(AR.SUMMARY).provider == "deepseek"   # 非白名单
+    # 白名单 family 的客户端不注 disabled(思考开)
+    f = build_default_factory(glm_api_key="k", deepseek_api_key="sk-ds")
+    assert f.chat_client("deepseek_think")._body() is None
+    assert f.chat_client("deepseek")._body() == {"thinking": {"type": "disabled"}}

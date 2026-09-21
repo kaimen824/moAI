@@ -62,6 +62,10 @@ def build_default_factory(glm_api_key: str, dashscope_api_key: str = "",
         registry.register(DashScopeFamily(api_key=dashscope_api_key))
     if deepseek_api_key:
         registry.register(DeepSeekFamily(api_key=deepseek_api_key))
+        # 思考白名单角色的专用 family(ADR-0037):不注 disabled,恢复思考
+        registry.register(DeepSeekFamily(
+            api_key=deepseek_api_key, name="deepseek_think",
+            disable_thinking=False))
     registry.register(
         OpenAICompatFamily(
             name="openai", api_key=glm_api_key, base_url="https://api.openai.com/v1"

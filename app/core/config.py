@@ -106,8 +106,12 @@ class Settings:
     # 0 = 关闭守卫(测试隔离用)
     chapter_min_chars: int = 2500
     # DeepSeek V4 双模默认思考,推理 token 挤占写作产出(ADR-0034 诊断)——
-    # True 时官方 provider 全部调用附 thinking=disabled
+    # True 时官方 provider 全部调用附 thinking=disabled;
+    # deepseek_thinking_roles(ADR-0037):逗号分隔角色白名单(如 REVIEWER,OUTLINE),
+    # 白名单角色走 deepseek_think provider(不注 disabled,恢复思考)——
+    # 一致性核对/数值推演是推理型任务,关思考退化成字面匹配
     deepseek_disable_thinking: bool = False
+    deepseek_thinking_roles: str = ""
     _model_overrides: dict[AgentRole, str] = field(default_factory=dict)
 
     # ---- 模型路由 ----
@@ -176,6 +180,7 @@ def get_settings() -> Settings:
                 log_level=os.environ.get("NOVEL_LOG_LEVEL", "INFO"),
                 chapter_min_chars=int(os.environ.get("NOVEL_CHAPTER_MIN_CHARS", "2500")),
                 deepseek_disable_thinking=os.environ.get("DEEPSEEK_DISABLE_THINKING", "") == "1",
+                deepseek_thinking_roles=os.environ.get("DEEPSEEK_THINKING_ROLES", ""),
             )
         return _settings
 

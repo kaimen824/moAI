@@ -55,7 +55,11 @@ class ModelRouter:
         # key 时 glm-* 落智谱直连,再兜底 openai 兼容。
         s = self._settings
         if model.startswith("deepseek") and s.deepseek_api_key:
-            provider = "deepseek"
+            # 思考白名单(ADR-0037):一致性核对/数值推演的评审角色恢复思考
+            thinking = {r.strip() for r in s.deepseek_thinking_roles.split(",")
+                        if r.strip()}
+            provider = ("deepseek_think" if role.value in thinking
+                        else "deepseek")
         elif s.dashscope_api_key:
             provider = "dashscope"
         elif model.startswith("glm") and s.glm_api_key:

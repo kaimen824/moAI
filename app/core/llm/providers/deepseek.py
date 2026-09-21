@@ -42,11 +42,19 @@ class DeepSeekChat(OpenAICompatChat):
 
 
 class DeepSeekFamily(OpenAICompatFamily):
-    def __init__(self, api_key: str):
-        super().__init__(name="deepseek", api_key=api_key,
+    """disable_thinking:None=跟随 settings 全局开关(默认 family 行为);
+    显式 True/False 覆盖——deepseek_think family(ADR-0037 白名单角色,
+    恢复思考)固定 False。"""
+
+    def __init__(self, api_key: str, *, name: str = "deepseek",
+                 disable_thinking: bool | None = None):
+        super().__init__(name=name, api_key=api_key,
                          base_url=DEEPSEEK_BASE_URL)
+        self._disable_override = disable_thinking
 
     def create_chat_client(self) -> DeepSeekChat:
         client = DeepSeekChat(self._api_key, self._base_url)
-        client._disable_thinking = get_settings().deepseek_disable_thinking
+        client._disable_thinking = (
+            get_settings().deepseek_disable_thinking
+            if self._disable_override is None else self._disable_override)
         return client
