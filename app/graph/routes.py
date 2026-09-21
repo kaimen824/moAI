@@ -9,30 +9,32 @@ from langgraph.graph import END
 
 from app.graph.state import GraphState
 
-REWRITE_LIMIT = 3   # ADR-0007 裁决 4(可配置)
+REWRITE_LIMIT = 3   # ADR-0007 裁决 4(可配置)——结构闸(大纲一致性)重写上限
+STYLE_POLISH_LIMIT = 2      # 风格闸精校上限(ADR-0036 串行修复,独立计数)
 STAGE_REGEN_LIMIT = 3        # 细纲重生成上限:超过自动转用户(行业惯例:escalate to human)
 MASTER_REGEN_LIMIT = 3       # 总大纲重生成上限(ADR-0016:与细纲/重写同口径)
 
 
-def _polishable(state: GraphState) -> bool:
-    """精校判定(ADR-0018,修订):分类轴是"局部可指令化 vs 结构性"——
-    所有给出 revise 的评审均标注 style(纯文风)或 local(带精确处方的局部
-    事实修正)→ 精校;block、任一 content(结构性)、字段缺失 → 全量重写。
-    """
-    for r in (state.get("outline_review", {}), state.get("quality_review", {})):
-        if r.get("verdict", "revise") in ("revise", "block"):
-            if r.get("verdict") == "block" or r.get("fix_scope") not in ("style", "local"):
-                return False
-    return any(r.get("verdict") == "revise"
-               for r in (state.get("outline_review", {}),
-                         state.get("quality_review", {})))
+def route_after_struct_review(state: GraphState) -> str:
+    """结构闸(ADR-0036):大纲一致性评审先行——revise 带结构反馈全文重写,
+    过了才进风格闸;耗尽转人工。字数下限兜底也在此(内容问题归结构)。"""
+    v = state.get("struct_verdict", "revise")
+    if v == "pass":
+        return "style_review"
+    if v == "needs_user":
+        return "user_review"
+    return "rewrite"
 
 
-def route_after_merge(state: GraphState) -> str:
+def route_after_style_review(state: GraphState) -> str:
+    """风格闸(ADR-0036):结构过了才跑——revise 走精校(局部修,不重掷
+    全文骰子),过了交人审;精校上限独立计数,耗尽转人工。"""
     v = state.get("merged_verdict", "revise")
-    if v == "revise":
-        return "polish" if _polishable(state) else "rewrite"
-    return "user_review"       # pass / needs_user 均交用户
+    if v == "pass":
+        return "user_review"
+    if v == "needs_user":
+        return "user_review"
+    return "polish"
 
 
 def route_after_review(state: GraphState) -> str:

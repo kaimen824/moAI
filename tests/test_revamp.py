@@ -67,7 +67,8 @@ def test_revamp_e2e_rewrite_review_finalize(env):
     # 续跑:build_context → write_draft → 三评审 pass → 人审中断
     steps = [n for chunk in graph.stream(None, cfg, stream_mode="updates")
              for n in chunk]
-    assert "build_context" in steps and "merge_reviews" in steps
+    assert "build_context" in steps and "struct_merge" in steps \
+        and "style_merge" in steps
     intr = graph.get_state(cfg).tasks[0].interrupts[0].value
     assert intr["type"] == "user_review_chapter"
 

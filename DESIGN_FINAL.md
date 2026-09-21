@@ -851,3 +851,36 @@ ch12 语法黏连(虚词修剪)同族:禁了叙事骨架,评审-重写必死锁�
 - **遗留观察**:'经脉闭塞''炼体三重'等设定术语仍在清单边缘——它们出现在
   facts/前文而非要点文本时不受豁免;但写手可自然换称,反馈可执行,不构成
   死锁;若后续实证再抓,同机制扩豁免集(facts 内容)即可。
+
+**ADR-0036 串行双闸评审——结构先行,风格后置(2026-09-21,所有者拍板 B 方案
++ 结构 3 轮/风格 2 轮)**:诊断——《古真神》7 次 needs_user。ADR-0035 除掉
+月圆死锁后仍大概率转人工,新根因:①**合取闸门**——三评审并行跑完 merge 要求
+outline AND reviewer 同时 pass,历史单路通过率 reviewer 7%(2/27)、outline
+24%(8/33),联合 ~2%/轮,3 轮全过 <6%,数学上必然转人工;②**双反馈同注**——
+rewrite 时两份意见同时塞给 writer,修结构顾不上风格、修风格破了结构
+(r1 能力越权→r2 要点缺失→r3 信息过载的打地鼠轨迹)。机制:
+- **拓扑**:write → [结构闸:review_draft_outline ∥ review_threads →
+  struct_merge] →(pass)→ [风格闸:review_quality → style_merge] →
+  user_review。结构 revise → write_draft 全文重写(只带结构反馈——
+  quality_review 此时未跑,上一章残留由 next_chapter/revamp values 清空);
+  风格 revise → polish_draft 精校局部修(**不重掷全文骰子,结构成果不被
+  风格返工翻掉**,ADR-0018 精校通道专属风格闸)。
+- **计数**:结构闸 rewrite_count/REWRITE_LIMIT=3(口径与旧 merge 零变化:
+  首稿+2 次重写);风格闸 polish_count/STYLE_POLISH_LIMIT=2(执行 2 轮
+  精校,第 3 次 revise 判定耗尽)。字数兜底(ADR-0034)移入结构闸——
+  字数是内容问题。伏笔评审与结构并行,仍不表决。
+- **语义变化**:旧 _polishable(双评审 fix_scope 分类)删除——一切 outline
+  revise 归结构闸全文重写(outline 的意见本质是内容层),风格闸只消费
+  review_quality。merged_verdict 保留为风格闸终态(人审/auto_mode 消费);
+  新增 struct_verdict;中断卡聚合 rewrite_exhausted(任一闸)并新增
+  polish_exhausted 明示。
+- **trade-off**:墙钟变长(串行两阶段);风格闸期间结构不复检(polish
+  ±10% 字数约束保结构不被翻);单闸 pass 率低的问题(评审贴线抖)不因此
+  消失——串行后 outline 单维 3 轮通过率 ~56%,仍可能转人工,留待实测
+  再议(阈值线/评审模型)。
+- **实施**:merge_reviews 一分为二(struct_merge/style_merge,reviewer 审计
+  名同步);route_after_merge/_polishable 删除,新增 route_after_struct_review/
+  route_after_style_review;wiring 重接;build.py 再导出更新;SSE payload 加
+  struct_verdict/polish_count/polish_exhausted。测试:e2e 审计断言与精校
+  两用例按串行语义重写(风格耗尽:polish×2/quality×3/draft×1),字数兜底
+  用例挂 struct_merge,_polishable 用例换串行路由断言。174 绿 + 契约 KEPT。

@@ -208,30 +208,23 @@ def test_canonical_entity_registry(deps):
     assert entry.get("aliases") == ["审计部外勤组"]
 
 
-# ---------- 精校路由判定(ADR-0018 修订:style|local → 精校)----------
+# ---------- 串行双闸路由(ADR-0036:结构先行,风格后置,各自计数)----------
 
-def test_polishable_routing():
-    from app.graph.build import _polishable
+def test_serial_gate_routing():
+    from app.graph.routes import route_after_struct_review, route_after_style_review
 
-    def st(o, q):
-        return {"outline_review": o, "quality_review": q}
+    # 结构闸:pass -> 风格评审;revise -> 全文重写(无论 fix_scope,结构意见归结构);
+    # needs_user -> 转人工
+    assert route_after_struct_review({"struct_verdict": "pass"}) == "style_review"
+    assert route_after_struct_review({"struct_verdict": "revise"}) == "rewrite"
+    assert route_after_struct_review({"struct_verdict": "needs_user"}) == "user_review"
+    assert route_after_struct_review({}) == "rewrite"          # 缺省安全侧重写
 
-    REV = {"verdict": "revise"}
-    # 双 style / style+local / 双 local → 精校
-    assert _polishable(st({**REV, "fix_scope": "style"}, {**REV, "fix_scope": "style"}))
-    assert _polishable(st({**REV, "fix_scope": "local"}, {**REV, "fix_scope": "style"}))
-    assert _polishable(st({**REV, "fix_scope": "local"}, {**REV, "fix_scope": "local"}))
-    # 一 pass 一 revise(style) → 精校(pass 方不需要 fix_scope)
-    assert _polishable(st({"verdict": "pass"}, {**REV, "fix_scope": "local"}))
-    # 任一 content(结构性/大范围偏离)→ 重写
-    assert not _polishable(st({**REV, "fix_scope": "local"}, {**REV, "fix_scope": "content"}))
-    # 字段缺失(旧评审输出)→ 安全侧重写
-    assert not _polishable(st(REV, {**REV, "fix_scope": "style"}))
-    # block → 重写
-    assert not _polishable(st({"verdict": "block", "fix_scope": "style"},
-                              {"verdict": "pass"}))
-    # 双 pass(无 revise)→ 不进精校路由
-    assert not _polishable(st({"verdict": "pass"}, {"verdict": "pass"}))
+    # 风格闸:pass / needs_user -> 人审;revise -> 精校(局部修,不重掷全文)
+    assert route_after_style_review({"merged_verdict": "pass"}) == "user_review"
+    assert route_after_style_review({"merged_verdict": "needs_user"}) == "user_review"
+    assert route_after_style_review({"merged_verdict": "revise"}) == "polish"
+    assert route_after_style_review({}) == "polish"            # 缺省安全侧精校
 
 
 # ---------- 新细纲格式仍可解析 ----------

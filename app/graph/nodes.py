@@ -15,8 +15,8 @@ from langgraph.types import interrupt
 
 from app.core.config import THREAD_LONG_AGE, THREAD_SHORT_AGE, get_settings
 from app.graph.agents.base import LLMFormatError
-from app.graph.routes import (REWRITE_LIMIT, _master_escalation,
-                              _stage_escalation)
+from app.graph.routes import (REWRITE_LIMIT, STYLE_POLISH_LIMIT,
+                              _master_escalation, _stage_escalation)
 from app.graph.runtime import Deps, StopRequested
 from app.graph.state import GraphState
 from app.memory.repository import AgentContext
@@ -118,7 +118,7 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
     自动模式(ADR-0016):双评审 pass 直通定稿,伏笔变更随评审建议自动生效
     (Codex 台账可事后查阅);rewrite_exhausted(重写 3 次仍未过)强制回人工。
     """
-    exhausted = bool(state.get("rewrite_exhausted"))
+    exhausted = bool(state.get("rewrite_exhausted") or state.get("polish_exhausted"))
     if state.get("auto_mode") and not exhausted:
         decision = {"action": "confirm",
                     "threads": state.get("thread_review", {}).get("thread_changes", [])}
@@ -133,12 +133,14 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
             "thread_changes": state.get("thread_review", {}).get("thread_changes", []),
             "conflicts": state.get("fact_changes", {}).get("conflicts", []),
             "rewrite_exhausted": exhausted,
+            "polish_exhausted": bool(state.get("polish_exhausted")),
         })
     update = {"user_input": decision,
               "thread_changes": decision.get("threads", [])}   # 人工确认后的伏笔变更
     if decision.get("action") == "revise":
         # 用户意见驱动的重写独立计数:重置,不与自动重写共享上限
-        update.update({"rewrite_count": 0, "rewrite_exhausted": False})
+        update.update({"rewrite_count": 0, "rewrite_exhausted": False,
+                       "polish_count": 0, "polish_exhausted": False})
     return update
 
 
@@ -210,36 +212,58 @@ def build_context(state: GraphState, deps: Deps) -> dict:
             "context_stats": stats}
 
 
-def merge_reviews(state: GraphState, deps: Deps) -> dict:
-    """fan-in:双 pass 才通过;达重写上限不再自动通过——转交用户裁决(needs_user)。
+def struct_merge(state: GraphState, deps: Deps) -> dict:
+    """结构闸 fan-in(ADR-0036 串行修复):大纲一致性先行,revise 带结构
+    反馈全文重写;过了才放行风格闸。字数下限兜底(ADR-0034)在此——
+    字数是内容问题,归结构循环。达重写上限转人工(needs_user)。
 
-    字数下限兜底(ADR-0034):双 pass 但草稿低于下限 → 强制 revise(writer
-    自查补写与评审契约都漏掉时的最后一道代码闸),复用 rewrite_count/
-    REWRITE_LIMIT 轮次上限,不新增循环机制。
+    合取闸门死锁实证(《古真神》):双评审各 ~7%/24% 通过率,联合 ~2%/轮,
+    3 轮全过 <6%,必然转人工;双反馈同注导致修结构顾不上风格的打地鼠。
     """
     o = state.get("outline_review", {})
-    q = state.get("quality_review", {})
-    verdicts = [v.get("verdict", "revise") for v in (o, q)]
+    verdict = o.get("verdict", "revise")
     floor = get_settings().chapter_min_chars
     too_short = floor > 0 and len(state.get("draft") or "") < floor
-    if all(v == "pass" for v in verdicts) and not too_short:
-        return {"merged_verdict": "pass", "rewrite_exhausted": False}
-    if all(v == "pass" for v in verdicts) and too_short:
-        deps.log_review(state, reviewer="merge", forced=True,
+    if verdict == "pass" and too_short:
+        deps.log_review(state, reviewer="struct_merge", forced=True,
                         verdict={"verdict": "revise",
                                  "feedback": (f"字数不足:草稿 {len(state.get('draft') or '')} 字"
                                               f"低于下限 {floor} 字,补足情节后重写")},
                         round_no=state.get("rewrite_count", 0) + 1)
+        verdict = "revise"
+    if verdict == "pass":
+        return {"struct_verdict": "pass", "rewrite_exhausted": False}
     count = state.get("rewrite_count", 0)
     if count + 1 >= REWRITE_LIMIT:
-        deps.log_review(state, reviewer="merge", forced=True,
+        deps.log_review(state, reviewer="struct_merge", forced=True,
                         verdict={"verdict": "needs_user",
-                                 "feedback": "已达重写上限,评审仍未通过,转交用户裁决"},
+                                 "feedback": "结构闸已达重写上限,大纲一致性仍未通过,转交用户裁决"},
                         round_no=count + 1)
-        return {"merged_verdict": "needs_user", "rewrite_exhausted": True,
+        return {"struct_verdict": "needs_user", "rewrite_exhausted": True,
                 "rewrite_count": count + 1}
-    return {"merged_verdict": "revise", "rewrite_exhausted": False,
+    return {"struct_verdict": "revise", "rewrite_exhausted": False,
             "rewrite_count": count + 1}
+
+
+def style_merge(state: GraphState, deps: Deps) -> dict:
+    """风格闸(ADR-0036):结构过了才跑。revise 走精校通道(便宜模型局部
+    修,不重掷全文骰子——结构成果不被风格返工翻掉);精校执行轮次独立
+    计数(STYLE_POLISH_LIMIT=2):已执行满 2 轮仍 revise → 转人工,
+    不因换了便宜通道而无限精校。
+    """
+    q = state.get("quality_review", {})
+    verdict = q.get("verdict", "revise")
+    if verdict == "pass":
+        return {"merged_verdict": "pass", "polish_exhausted": False}
+    count = state.get("polish_count", 0)
+    if count >= STYLE_POLISH_LIMIT:
+        deps.log_review(state, reviewer="style_merge", forced=True,
+                        verdict={"verdict": "needs_user",
+                                 "feedback": "风格闸已达精校上限,文风仍未通过,转交用户裁决"},
+                        round_no=count + 1)
+        return {"merged_verdict": "needs_user", "polish_exhausted": True}
+    return {"merged_verdict": "revise", "polish_exhausted": False,
+            "polish_count": count + 1}
 
 
 def finalize(state: GraphState, deps: Deps) -> dict:
@@ -265,6 +289,8 @@ def next_chapter(state: GraphState, deps: Deps) -> dict:
     stage_end = state.get("stage_end_chapter", 0)
     is_stage_first = (done + 1 > stage_end) or not state.get("stage_outline")
     reset = {"rewrite_count": 0, "rewrite_exhausted": False,
+             "polish_count": 0, "polish_exhausted": False,
+             "quality_review": {},          # 上一章风格意见不得串入本章结构循环(串行闸门)
              "revamp_pending": False, "revamp_done": False}   # revamp 标记不跨章残留
     if is_stage_first:
         reset["stage_regen_count"] = 0          # 新阶段:细纲轮次重新计

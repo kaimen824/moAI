@@ -28,6 +28,7 @@ _PAYLOAD_KEYS = (
     "thread_changes", "context_stats", "user_directives", "entity_changes",
     "rewrite_exhausted", "stage_end_chapter", "stage_regen_count",
     "chapter_no",            # 前端时间线按章分组的依据
+    "struct_verdict", "polish_count", "polish_exhausted",   # 串行双闸(ADR-0036)
 )
 
 

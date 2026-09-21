@@ -6,8 +6,10 @@
   中断点 B:章节审阅     resume {"action": "confirm|revise",
                                 "feedback": str,
                                 "threads": [被人工确认的伏笔变更]}
-双评审 fan-out/fan-in;重写上限 3(可配);达上限不自动降级——
-rewrite_exhausted 交用户裁决(needs_user)。
+串行双闸(ADR-0036):结构闸(大纲一致性+字数)先行,revise 全文重写
+(REWRITE_LIMIT=3);过了才进风格闸(文风/复读),revise 走精校局部修
+(STYLE_POLISH_LIMIT=2 轮);任一闸耗尽转人工,不自动降级。伏笔评审与
+结构评审并行 fan-out,不参与闸门表决。
 
 本模块只做纯结构接线:节点实现在 agents/ 与 nodes.py,路由判定在
 routes.py;这里看不到业务规则。
@@ -44,16 +46,18 @@ from app.graph.nodes import (
     confirm_master_outline,
     confirm_stage_outline,
     finalize,
-    merge_reviews,
     next_chapter,
+    struct_merge,
+    style_merge,
     user_review_chapter,
 )
 from app.graph.routes import (
     route_after_master_review,
-    route_after_merge,
     route_after_review,
     route_after_stage_agent_review,
     route_after_stage_review,
+    route_after_struct_review,
+    route_after_style_review,
     route_chapter_entry,
     route_entry,
     route_next,
@@ -81,14 +85,15 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_node("chapter_slice", _node(ChapterSliceNode(deps.llm), deps))
     g.add_node("build_context", _node(build_context, deps))
     g.add_node("write_draft", _node(WriterNode(deps.llm), deps))
-    # 文风返工通道(ADR-0018):双评审均 style/local → 精校既有稿,便宜模型不全量重写
+    # 文风返工通道(ADR-0018;ADR-0036 串行化后专属风格闸,精校不回结构)
     g.add_node("polish_draft", _node(PolishDraftNode(deps.llm), deps))
     g.add_node("review_draft_outline", _node(ReviewDraftOutline(deps.llm), deps))
     g.add_node("review_quality", _node(QualityReviewNode(deps.llm), deps))
-    # 伏笔评审(ADR-0020 单独评审):与双评审并列 fan-out,无 pass/revise 裁决,
-    # 不参与 merge 表决——merge 仍只消费 outline/quality 两路
+    # 伏笔评审(ADR-0020 单独评审):与结构评审并列 fan-out,无 pass/revise
+    # 裁决,不参与闸门表决——只产 thread_changes 与超龄复核
     g.add_node("review_threads", _node(ThreadReviewNode(deps.llm), deps))
-    g.add_node("merge_reviews", _node(merge_reviews, deps))
+    g.add_node("struct_merge", _node(struct_merge, deps))
+    g.add_node("style_merge", _node(style_merge, deps))
     g.add_node("user_review_chapter", functools.partial(user_review_chapter, deps=deps))
     g.add_node("event_extract", _node(EventExtractNode(deps.llm), deps))
     g.add_node("update_characters", _node(UpdateCharactersNode(deps.llm), deps))
@@ -134,22 +139,25 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_edge("chapter_slice", "build_context")
     g.add_edge("build_context", "write_draft")
 
-    # 三路评审 fan-out / fan-in(ADR-0020:伏笔评审与双评审并列,不参与表决);
-    # 返工分两路:精校 / 全量重写(ADR-0018)
+    # 串行双闸(ADR-0036):结构闸先行(大纲一致性+字数,revise 全文重写),
+    # 过了才进风格闸(文风/复读,revise 精校局部修)——拆掉合取闸门,
+    # 每轮反馈单维,治"修结构顾不上风格"的打地鼠死锁;伏笔评审与结构
+    # 并行 fan-out(不表决),风格闸只跑 review_quality
     g.add_edge("write_draft", "review_draft_outline")
-    g.add_edge("write_draft", "review_quality")
     g.add_edge("write_draft", "review_threads")
-    g.add_edge("polish_draft", "review_draft_outline")
-    g.add_edge("polish_draft", "review_quality")
-    g.add_edge("polish_draft", "review_threads")
-    g.add_edge("review_draft_outline", "merge_reviews")
-    g.add_edge("review_quality", "merge_reviews")
-    g.add_edge("review_threads", "merge_reviews")
+    g.add_edge("review_draft_outline", "struct_merge")
+    g.add_edge("review_threads", "struct_merge")
     g.add_conditional_edges(
-        "merge_reviews", route_after_merge,
-        {"polish": "polish_draft", "rewrite": "write_draft",
+        "struct_merge", route_after_struct_review,
+        {"rewrite": "write_draft", "style_review": "review_quality",
          "user_review": "user_review_chapter"},
     )
+    g.add_edge("review_quality", "style_merge")
+    g.add_conditional_edges(
+        "style_merge", route_after_style_review,
+        {"polish": "polish_draft", "user_review": "user_review_chapter"},
+    )
+    g.add_edge("polish_draft", "review_quality")
     g.add_conditional_edges(
         "user_review_chapter", route_after_review,
         {"rewrite_with_feedback": "write_draft", "finalize": "event_extract"},

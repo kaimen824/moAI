@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.llm.base import LLMResponse
 from app.core.llm.facade import LLMFacade
 from app.graph.agents.writer import WriterNode
-from app.graph.nodes import merge_reviews
+from app.graph.nodes import struct_merge
 from app.graph.runtime import build_engine
 
 R = LLMResponse
@@ -65,14 +65,14 @@ def test_writer_keeps_first_when_retry_not_longer(env):
     assert out["draft"] == "短稿"
 
 
-def test_merge_forces_revise_on_short_draft_despite_double_pass(env):
-    """双 pass 但草稿低于下限 → merge 强制 revise,feedback 带实际字数。"""
+def test_struct_gate_forces_revise_on_short_draft_despite_pass(env):
+    """结构评审 pass 但草稿低于下限 → 结构闸强制 revise,feedback 带实际字数
+    (ADR-0036 串行化后字数兜底从 merge 移入结构闸——字数是内容问题)。"""
     deps, conn = env
     state = {"story_id": "s1", "draft": "短", "rewrite_count": 0,
-             "outline_review": {"verdict": "pass"},
-             "quality_review": {"verdict": "pass"}}
-    out = merge_reviews(state, deps)
-    assert out["merged_verdict"] == "revise"
+             "outline_review": {"verdict": "pass"}}
+    out = struct_merge(state, deps)
+    assert out["struct_verdict"] == "revise"
     assert out["rewrite_count"] == 1
     row = conn.execute(
         "SELECT feedback FROM review_results ORDER BY created_at DESC LIMIT 1"
@@ -80,14 +80,13 @@ def test_merge_forces_revise_on_short_draft_despite_double_pass(env):
     assert "字数不足" in row["feedback"]
 
 
-def test_merge_pass_unchanged_when_floor_disabled(env, monkeypatch):
-    """floor=0(测试隔离口径):双 pass 不受守卫影响。"""
+def test_struct_gate_pass_unchanged_when_floor_disabled(env, monkeypatch):
+    """floor=0(测试隔离口径):结构 pass 不受守卫影响。"""
     deps, conn = env
     monkeypatch.setattr(get_settings(), "chapter_min_chars", 0, raising=False)
     state = {"story_id": "s1", "draft": "短", "rewrite_count": 0,
-             "outline_review": {"verdict": "pass"},
-             "quality_review": {"verdict": "pass"}}
-    assert merge_reviews(state, deps)["merged_verdict"] == "pass"
+             "outline_review": {"verdict": "pass"}}
+    assert struct_merge(state, deps)["struct_verdict"] == "pass"
 
 
 def test_reviewer_prompt_carries_length_note(env):

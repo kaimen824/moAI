@@ -391,11 +391,11 @@ def test_e2e_rewrite_exhausted_notifies_user(engine, monkeypatch):
     # 用户裁决 confirm -> 仍可定稿(带评审意见)
     result = graph.invoke(Command(resume={"action": "confirm", "threads": []}), cfg)
     assert result.get("chapters_done") == 1
-    # 审计:转交用户时 merge 写入 needs_user 记录(重写耗尽痕迹)
+    # 审计:转交用户时结构闸写入 needs_user 记录(重写耗尽痕迹,ADR-0036 串行双闸)
     rows = conn.execute(
         "SELECT reviewer, verdict, forced_pass FROM review_results"
         " ORDER BY created_at").fetchall()
-    assert rows[-1]["reviewer"] == "merge"
+    assert rows[-1]["reviewer"] == "struct_merge"
     assert rows[-1]["verdict"] == "needs_user"
     assert rows[-1]["forced_pass"] == 1
 
@@ -532,19 +532,17 @@ def test_master_outline_regen_limit_escalates(engine, monkeypatch):
 
 
 def test_polish_channel_for_style_only_revision(tmp_path):
-    """ADR-0018:双评审均 revise+fix_scope=style -> 走精校(便宜模型)而非全量重写;
-    精校产物回双评审,复检通过后正常定稿。"""
+    """ADR-0018/0036:结构闸(大纲一致性)一次过 -> 风格闸 style revise ->
+    走精校(便宜模型)而非全量重写;精校产物回风格评审复检,通过后正常定稿。"""
     import json as _json
-    calls = {"rdo": 0, "rq": 0}
+    calls = {"rq": 0}
 
     def dynamic(stage: str):
         if stage == "review_draft_outline":
-            calls["rdo"] += 1
-            revise = calls["rdo"] == 1
             return R(content=_json.dumps({
-                "verdict": "revise" if revise else "pass",
-                "scores": {"consistency": 8, "fidelity": 6 if revise else 8},
-                "fix_scope": "style", "feedback": "复读表达过多"}, ensure_ascii=False), model="fake")
+                "verdict": "pass",
+                "scores": {"consistency": 8, "fidelity": 8},
+                "fix_scope": "style", "feedback": "结构无恙"}, ensure_ascii=False), model="fake")
         if stage == "review_quality":
             calls["rq"] += 1
             revise = calls["rq"] == 1
@@ -582,22 +580,22 @@ def test_polish_channel_for_style_only_revision(tmp_path):
         "SELECT COUNT(*) c FROM chapters WHERE status='active'").fetchone()["c"] == 1
 
 
-def test_polish_shared_budget_exhaustion(tmp_path):
-    """ADR-0018:精校与重写共享 rewrite_count——纯文风问题跑满 3 轮仍未过,
-    照旧 needs_user 转人工(不因换了便宜通道而无限精校)。"""
+def test_polish_budget_exhaustion_style_gate(tmp_path):
+    """ADR-0036 串行双闸:结构过 -> 风格闸精校独立计数(STYLE_POLISH_LIMIT=2),
+    跑满仍未过 -> needs_user 转人工,polish_exhausted 明示;不重掷全文骰子。"""
     import json as _json
     STYLE_REVISE = {"verdict": "revise", "fix_scope": "style",
                     "scores": {"consistency": 8, "foreshadow": 8, "style": 5},
                     "feedback": "复读表达", "thread_changes": []}
-    FIDELITY_REVISE = {"verdict": "revise", "fix_scope": "style",
-                       "scores": {"consistency": 8, "fidelity": 6},
-                       "feedback": "句式复现"}
+    STRUCT_PASS = {"verdict": "pass", "fix_scope": "style",
+                   "scores": {"consistency": 8, "fidelity": 8},
+                   "feedback": "结构无恙"}
 
     def dynamic(stage: str):
         if stage == "review_quality":
             return R(content=_json.dumps(STYLE_REVISE, ensure_ascii=False), model="fake")
         if stage == "review_draft_outline":
-            return R(content=_json.dumps(FIDELITY_REVISE, ensure_ascii=False), model="fake")
+            return R(content=_json.dumps(STRUCT_PASS, ensure_ascii=False), model="fake")
         val = SCRIPTS.get(stage)
         if val is None:
             return None
@@ -617,12 +615,14 @@ def test_polish_shared_budget_exhaustion(tmp_path):
     result = graph.invoke(Command(resume={"action": "confirm"}), cfg)
     intr = result["__interrupt__"][0].value
     assert intr["type"] == "user_review_chapter"
-    assert intr["rewrite_exhausted"] is True          # 共享预算:精校 3 轮后转人工
+    assert intr["rewrite_exhausted"] is True          # 中断卡聚合:结构或风格任一耗尽
+    assert intr["polish_exhausted"] is True           # 风格闸精校上限耗尽
 
     stages = [r["stage"] for r in conn.execute(
         "SELECT stage FROM agent_traces ORDER BY created_at").fetchall()]
-    assert stages.count("polish") == 2                # 首稿+3轮返工:精校占后两轮
-    assert stages.count("draft") == 1                 # 全量重写始终只有一次
+    assert stages.count("polish") == 2                # 精校恰好 STYLE_POLISH_LIMIT 轮
+    assert stages.count("draft") == 1                 # 风格闸永不全量重写(结构成果不被翻掉)
+    assert stages.count("review_quality") == 3        # 首检 + 两轮精校复检
 
 
 def test_commit_finalize_dedup_and_setting_chain(tmp_path):

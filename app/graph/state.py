@@ -42,8 +42,11 @@ class GraphState(TypedDict, total=False):
     outline_review: dict          # 大纲 Agent 成稿裁决
     quality_review: dict          # 审校裁决(伏笔变更建议已剥离,ADR-0020)
     thread_review: dict           # 伏笔评审裁决(thread_changes + 超龄复核 reviews)
-    merged_verdict: str           # pass | revise | block | needs_user
-    rewrite_exhausted: bool       # 达重写上限仍未通过 -> 交用户裁决
+    struct_verdict: str           # 结构闸终态(ADR-0036):pass | revise | needs_user
+    merged_verdict: str           # pass | revise | block | needs_user(风格闸终态,ADR-0036)
+    rewrite_exhausted: bool       # 结构闸重写上限耗尽 -> 交用户裁决
+    polish_count: int             # 风格闸精校轮次(ADR-0036 串行修复:结构过 -> 风格循环)
+    polish_exhausted: bool        # 风格闸精校上限耗尽 -> 交用户裁决
 
     # ---- 定稿(编排原子性:暂存变更集)----
     fact_changes: dict            # 事件管理抽取(facts/beliefs/visibility/entities/links)
