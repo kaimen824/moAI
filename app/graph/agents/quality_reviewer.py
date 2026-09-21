@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from app.core.config import AgentRole
+from app.core.config import AgentRole, get_settings
 from app.graph.agents.base import BaseAgent, LLMFormatError, NodeDeps, register_agent
 from app.graph.agents.outline_reviewer import _SAFE_REVISE
 from app.graph.agents.schemas import ReviewVerdict
@@ -30,6 +30,8 @@ _SYSTEM = (
     "- 主角全知:无信息来源却正确的推断;\n"
     "- 无代价胜利:目标达成且无损失、无遗留问题;\n"
     "- 复读表达:与近章高度重复的句式或口头禅(参见[禁用表达]清单,若提供)。\n"
+    "篇幅检查(ADR-0034):正文低于[字数下限](若标注)必须 revise,"
+    "feedback 注明实际字数与下限,fix_scope 标 content。\n"
     "feedback 的'亮点'至多一条,不得是'延续风格'式加码夸奖。"
 )
 
@@ -48,11 +50,15 @@ class QualityReviewNode(BaseAgent):
         threads = "\n".join(f"- {t['description']}({t['status']})"
                             for t in bundle.get("active_threads", []))
         ban = "\n".join(f"- {p}" for p in bundle.get("style_ban", []))
+        floor = get_settings().chapter_min_chars
+        length_note = (f"\n\n[字数下限:{floor} 字;本章草稿实际 {len(state.get('draft') or '')} 字,"
+                       "低于下限必须 revise]" if floor > 0 else "")
         user = (f"[本章草稿]\n{state.get('draft','')}\n\n"
                 f"[上期衔接(草稿若重演其中已发生事件,一致性记低分)]\n"
                 f"{bundle.get('carryover', '')}\n\n"
                 f"[世界已知事实(校验基准,标注章号)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}"
-                + (f"\n\n[禁用表达(近章高频复现,本章出现即 style 记低分)]\n{ban}" if ban else ""))
+                + (f"\n\n[禁用表达(近章高频复现,本章出现即 style 记低分)]\n{ban}" if ban else "")
+                + length_note)
         try:
             review = self.ask_json(_SYSTEM, user, stage="review_quality",
                                    story_id=state.get("story_id", ""),

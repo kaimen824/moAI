@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.config import reset_settings
+from app.core.config import get_settings, reset_settings
 from app.db.database import init_db
 
 
@@ -27,5 +27,8 @@ def isolated_settings(monkeypatch):
         if key.startswith("MODEL__"):
             monkeypatch.delenv(key, raising=False)
     reset_settings()
+    # 字数下限守卫(ADR-0034)默认关闭:既有测试的回放稿不保证字数;
+    # 守卫行为由 test_length_guard.py 显式设阈值覆盖
+    monkeypatch.setattr(get_settings(), "chapter_min_chars", 0, raising=False)
     yield
     reset_settings()

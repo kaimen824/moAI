@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from app.core.config import AgentRole
+from app.core.config import AgentRole, get_settings
 from app.core.llm.base import ChatMessage
 from app.graph.agents.base import BaseAgent, NodeDeps, register_agent
 
@@ -133,8 +133,9 @@ class WriterNode(BaseAgent):
             "chapter_no": state.get("chapter_no"),
             "round": state.get("rewrite_count", 0) + 1,
         }, sid)
+        floor = get_settings().chapter_min_chars
         system = (
-            "你是长篇网文执笔者。依据上下文写本章正文(2500-4000 字,网文单章体量),要求:\n"
+            f"你是长篇网文执笔者。依据上下文写本章正文({floor}-{floor + 1500} 字,网文单章体量),要求:\n"
             "1. [角色已知事实]是已经发生过的背景(标注了章号):角色只知道列出的内容,"
             "不得出现角色不该知道的信息;可以自然照应,但严禁把已发生的事件当作本章"
             "剧情重演或换措辞复写——本章必须推进新事件。\n"
@@ -186,4 +187,18 @@ class WriterNode(BaseAgent):
                 f"写作模型连续两次返回空内容(第{state.get('chapter_no')}章"
                 f"第{state.get('rewrite_count', 0) + 1}稿),已中止——请重试或换模型")
         draft = strip_markdown_title(draft)   # 剥离残留的 markdown 标题行
+        # 字数下限自查(ADR-0034):思考型模型把输出预算耗在推理上,散文缩水
+        # (实测 3711→3031→2222 逐章走低)。带反馈补写一次;二次仍不足则照常
+        # 进评审管道,由评审契约与 merge 兜底——不无限重试。
+        if floor > 0 and len(draft) < floor:
+            retry_user = (user + f"\n\n[字数不达标]上一稿仅 {len(draft)} 字,低于"
+                          f"{floor} 字下限。请补足到 {floor}-{floor + 1500} 字:"
+                          "扩写情节、动作与对话,严禁注水复读。")
+            draft2 = self.ask_text(system, retry_user, stage="draft",
+                                   story_id=state.get("story_id", ""))
+            draft2 = strip_markdown_title(draft2)
+            if draft2.strip() and len(draft2) > len(draft):
+                draft = draft2
+                if streaming:
+                    deps.emit("token", {"text": draft}, sid)
         return {"draft": draft}

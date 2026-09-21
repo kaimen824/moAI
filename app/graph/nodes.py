@@ -13,7 +13,7 @@ from typing import Callable
 
 from langgraph.types import interrupt
 
-from app.core.config import THREAD_LONG_AGE, THREAD_SHORT_AGE
+from app.core.config import THREAD_LONG_AGE, THREAD_SHORT_AGE, get_settings
 from app.graph.agents.base import LLMFormatError
 from app.graph.routes import (REWRITE_LIMIT, _master_escalation,
                               _stage_escalation)
@@ -204,12 +204,25 @@ def build_context(state: GraphState, deps: Deps) -> dict:
 
 
 def merge_reviews(state: GraphState, deps: Deps) -> dict:
-    """fan-in:双 pass 才通过;达重写上限不再自动通过——转交用户裁决(needs_user)。"""
+    """fan-in:双 pass 才通过;达重写上限不再自动通过——转交用户裁决(needs_user)。
+
+    字数下限兜底(ADR-0034):双 pass 但草稿低于下限 → 强制 revise(writer
+    自查补写与评审契约都漏掉时的最后一道代码闸),复用 rewrite_count/
+    REWRITE_LIMIT 轮次上限,不新增循环机制。
+    """
     o = state.get("outline_review", {})
     q = state.get("quality_review", {})
     verdicts = [v.get("verdict", "revise") for v in (o, q)]
-    if all(v == "pass" for v in verdicts):
+    floor = get_settings().chapter_min_chars
+    too_short = floor > 0 and len(state.get("draft") or "") < floor
+    if all(v == "pass" for v in verdicts) and not too_short:
         return {"merged_verdict": "pass", "rewrite_exhausted": False}
+    if all(v == "pass" for v in verdicts) and too_short:
+        deps.log_review(state, reviewer="merge", forced=True,
+                        verdict={"verdict": "revise",
+                                 "feedback": (f"字数不足:草稿 {len(state.get('draft') or '')} 字"
+                                              f"低于下限 {floor} 字,补足情节后重写")},
+                        round_no=state.get("rewrite_count", 0) + 1)
     count = state.get("rewrite_count", 0)
     if count + 1 >= REWRITE_LIMIT:
         deps.log_review(state, reviewer="merge", forced=True,

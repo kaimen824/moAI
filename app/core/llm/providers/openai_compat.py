@@ -77,6 +77,7 @@ class OpenAICompatChat(ChatClient):
         max_tokens: int | None = None,
         response_format: dict | None = None,
         tools: list[dict] | None = None,
+        extra_body: dict | None = None,      # provider 专属字段原样并入请求体
     ) -> LLMResponse:
         kwargs: dict = {
             "model": model,
@@ -89,6 +90,8 @@ class OpenAICompatChat(ChatClient):
             kwargs["response_format"] = response_format
         if tools is not None:
             kwargs["tools"] = tools
+        if extra_body is not None:
+            kwargs["extra_body"] = extra_body
         resp = self._client.chat.completions.create(**kwargs)
         choice = resp.choices[0]
         usage = getattr(resp, "usage", None)
@@ -114,6 +117,7 @@ class OpenAICompatChat(ChatClient):
         *,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        extra_body: dict | None = None,      # provider 专属字段原样并入请求体
     ) -> Iterator[str]:
         kwargs: dict = {
             "model": model,
@@ -125,6 +129,8 @@ class OpenAICompatChat(ChatClient):
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if extra_body is not None:
+            kwargs["extra_body"] = extra_body
         self._usage_local.usage = None
         stream = self._client.chat.completions.create(**kwargs)
         for chunk in stream:

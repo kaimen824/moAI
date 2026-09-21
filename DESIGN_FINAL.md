@@ -803,3 +803,29 @@ main 39 处,仓储被 repo.conn 穿透名存实亡;build.py 编排与节点业�
   deepseek-v3,切官方后该名会 400,必须在 .env 显式覆盖。reasoner
   (推理版)未用:这些角色全是结构化抽取/摘要任务。key 经真实最小调用
   验证有效。
+
+**ADR-0034 章节字数下限三层守卫 + DeepSeek 思考开关(2026-09-21,《古真神》
+诊断驱动)**:诊断——章字数 3711→3031→2222 逐章下降。根因两层:①v4-pro
+(V4 双模)默认思考,ch3 的 WRITER 调用 out=12385 token 中约 1 万是推理、
+散文仅 ~2200 token,思考挤占产出;②系统无篇幅闸门:writer 提示词"2500-4000
+字"是软约束,quality 评审契约无篇幅维度(2222 字照样 pass),merge 无代码
+校验。机制(所有者拍板:强角色切 deepseek-flash + 充值,守卫落地):
+- **三层守卫(settings.chapter_min_chars,默认 2500,0=关)**:writer 产出
+  <下限 → 带反馈补写一次(仿空输出重试模式;二稿严格更长才采用,否则保留
+  一稿);quality 评审输入携带[字数下限/实际字数]标注 + 契约条款"低于下限
+  必须 revise";merge_reviews 代码兜底——双 pass 但低于下限强制 revise,
+  复用 rewrite_count/REWRITE_LIMIT 轮次上限,不新增循环机制(与"循环控制
+  只用轮次上限"纪律一致)。提示词字数区间 f-string 引用同一配置,与守卫
+  同源不漂移。
+- **思考开关(settings.deepseek_disable_thinking)**:DeepSeekChat 覆盖
+  chat/stream(openai_compat 加通用 extra_body 透传)注入 thinking
+  disabled;flag 关时不附。全局生效(评审也关)——flash 定位成本优先,
+  质量降档由所有者实测后再议。
+- **模型名口径**:/models 实查官方仅 deepseek-flash / deepseek-v4-pro /
+  deepseek-chat(第三方"v4-flash"叫法不存在);强角色四行 → flash,.env
+  部署配置(gitignore 不入库)。
+- **测试策略**:conftest autouse 置 chapter_min_chars=0,167 既有测试零
+  回归;test_length_guard.py 五用例(补写一次/二稿不更长保留一稿/双 pass
+  强制 revise 带 feedback 落库/floor=0 不影响 pass/评审输入标注)+
+  thinking 开关单测。173 绿 + 契约 KEPT;flash 关思考实调 in/out 9/1
+  对比 v4-pro 开思考 88/10 且 content 空,确认思考关闭生效。

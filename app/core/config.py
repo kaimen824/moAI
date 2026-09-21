@@ -102,6 +102,12 @@ class Settings:
     log_level: str = "INFO"
     # 对话工作台(ADR-0031):ReAct 单轮工具调用步数上限(兜失控,可配)
     chat_max_steps: int = 15
+    # 章节字数下限(ADR-0034):writer 自查/评审契约/merge 兜底三层守卫共用;
+    # 0 = 关闭守卫(测试隔离用)
+    chapter_min_chars: int = 2500
+    # DeepSeek V4 双模默认思考,推理 token 挤占写作产出(ADR-0034 诊断)——
+    # True 时官方 provider 全部调用附 thinking=disabled
+    deepseek_disable_thinking: bool = False
     _model_overrides: dict[AgentRole, str] = field(default_factory=dict)
 
     # ---- 模型路由 ----
@@ -168,6 +174,8 @@ def get_settings() -> Settings:
                 global_daily_token_budget=int(os.environ.get("NOVEL_GLOBAL_DAILY_TOKEN_BUDGET", "0")),
                 log_dir=Path(os.environ.get("NOVEL_LOG_DIR", "logs")),
                 log_level=os.environ.get("NOVEL_LOG_LEVEL", "INFO"),
+                chapter_min_chars=int(os.environ.get("NOVEL_CHAPTER_MIN_CHARS", "2500")),
+                deepseek_disable_thinking=os.environ.get("DEEPSEEK_DISABLE_THINKING", "") == "1",
             )
         return _settings
 

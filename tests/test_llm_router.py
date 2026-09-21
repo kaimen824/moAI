@@ -90,3 +90,19 @@ def test_deepseek_family_registered_with_key():
     f2 = build_default_factory(glm_api_key="k")
     with pytest.raises(KeyError):
         f2.chat_client("deepseek")
+
+
+def test_deepseek_thinking_toggle(monkeypatch, isolated_settings):
+    """ADR-0034:flag 开 → 请求体附 thinking disabled;关 → 不附。"""
+    from app.core.config import get_settings
+    from app.core.llm.factory import build_default_factory
+    monkeypatch.setattr(get_settings(), "deepseek_disable_thinking", True,
+                        raising=False)
+    f = build_default_factory(glm_api_key="k", deepseek_api_key="sk-ds")
+    client = f.chat_client("deepseek")
+    assert client._body() == {"thinking": {"type": "disabled"}}
+    monkeypatch.setattr(get_settings(), "deepseek_disable_thinking", False,
+                        raising=False)
+    client2 = build_default_factory(glm_api_key="k", deepseek_api_key="sk-ds") \
+        .chat_client("deepseek")
+    assert client2._body() is None
