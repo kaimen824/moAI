@@ -26,8 +26,10 @@ def apply_edits(text: str, edits: list[dict]) -> tuple[str, list[dict], list[dic
     failed: list[dict] = []
     for e in edits:
         find, repl = (e.get("find") or "").strip(), e.get("replace") or ""
-        if len(find) < 2 or find == repl:
-            failed.append({"find": e.get("find", ""), "reason": "片段过短或与替换相同"})
+        if find == repl:
+            continue        # 空转编辑(模型偶发塞 find=replace):静默跳过,不烧重试
+        if len(find) < 2:
+            failed.append({"find": e.get("find", ""), "reason": "片段过短"})
             continue
         n = text.count(find)
         if n == 0:
@@ -45,7 +47,9 @@ _SYSTEM_EDITS = (
     '{"edits":[{"find":"原文精确片段","replace":"修订后片段"}]}\n'
     "铁律:\n"
     "1. find 必须是草稿中**逐字精确存在**的连续片段(建议 10-80 字),"
-    "且在全文中**唯一**——不唯一就向两侧加长;不得复述、不得改写;\n"
+    "且在全文中**唯一**——不唯一就向两侧加长;不得复述、不得改写;"
+    "不得输出 find 与 replace 相同的空编辑;想改一整段说明该拆成多条"
+    "小编辑(find 超过 100 字即过长);\n"
     "2. 每条编辑只解决一个问题;评审'必须修改'中的处方('将X改为Y')"
     "逐条落成编辑,一条不落;\n"
     "3. [禁用表达]每处命中单独一条编辑(换写法,不删内容);\n"

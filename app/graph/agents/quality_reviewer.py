@@ -51,20 +51,23 @@ class QualityReviewNode(BaseAgent):
 
     def __call__(self, state: dict, deps: NodeDeps) -> dict:
         bundle = state.get("context_bundle", {})
-        world_lines = "\n".join(
-            f"- [ch{f.get('chapter_established', '?')}] {f['content']}"
-            for f in bundle.get("pov_facts", [])
-        )
-        threads = "\n".join(f"- {t['description']}({t['status']})"
-                            for t in bundle.get("active_threads", []))
+        # 最小注入(ADR-0039,所有者提出):风格闸不做跨章事实校验(结构闸
+        # 职责),世界事实全量账本不进输入——只带上期衔接(称谓/时间线衔接
+        # 与重演判定)与伏笔评审结论(结构闸并行产出,比全量台账小一个量级
+        # 且只含本章相关变更)。
         ban = "\n".join(f"- {p}" for p in bundle.get("style_ban", []))
+        tr = state.get("thread_review") or {}
+        tr_lines = "\n".join(
+            f"- [{c.get('action', '?')}] {c.get('description', '')}"
+            for c in tr.get("thread_changes", []))
         floor = get_settings().chapter_min_chars
         length_note = (f"\n\n[字数下限:{floor} 字;本章草稿实际 {len(state.get('draft') or '')} 字,"
                        "低于下限必须 revise]" if floor > 0 else "")
         user = (f"[本章草稿]\n{state.get('draft','')}\n\n"
-                f"[上期衔接(草稿若重演其中已发生事件,一致性记低分)]\n"
-                f"{bundle.get('carryover', '')}\n\n"
-                f"[世界已知事实(校验基准,标注章号)]\n{world_lines}\n\n[现有活跃伏笔]\n{threads}"
+                f"[上期衔接(称谓/时间线衔接基准;草稿重演其中已发生事件记低分)]\n"
+                f"{bundle.get('carryover', '')}"
+                + (f"\n\n[本章伏笔变更(伏笔评审已判定,供 foreshadow 维度参照)]\n{tr_lines}"
+                   if tr_lines else "")
                 + (f"\n\n[禁用表达(近章高频复现,本章出现即 style 记低分)]\n{ban}" if ban else "")
                 + length_note)
         try:

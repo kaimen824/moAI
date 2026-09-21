@@ -30,10 +30,10 @@ def test_apply_edits_matrix():
     # 多处命中 → 失配并要求加长
     out, applied, failed = apply_edits(TEXT, [{"find": "沈砚", "replace": "他"}])
     assert failed[0]["reason"].startswith("命中 2 处")
-    # 过短/同值 → 失配
+    # 过短 → 失配;同值空编辑 → 静默跳过(不进 failed,不烧回填重试)
     out, applied, failed = apply_edits(TEXT, [{"find": "灯", "replace": "x"},
                                               {"find": "沈砚", "replace": "沈砚"}])
-    assert len(failed) == 2
+    assert out == TEXT and len(failed) == 1 and failed[0]["reason"] == "片段过短"
     # 顺序套用:前一条改变后一条的唯一性
     out, _, _ = apply_edits(
         TEXT, [{"find": "沈砚在暴雨中前行", "replace": "他在雨中前行"},
