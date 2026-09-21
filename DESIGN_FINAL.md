@@ -884,6 +884,12 @@ rewrite 时两份意见同时塞给 writer,修结构顾不上风格、修风格�
   struct_verdict/polish_count/polish_exhausted。测试:e2e 审计断言与精校
   两用例按串行语义重写(风格耗尽:polish×2/quality×3/draft×1),字数兜底
   用例挂 struct_merge,_polishable 用例换串行路由断言。174 绿 + 契约 KEPT。
+- **补记(同日,所有者指出):人审打回分阶段**——原 route_after_review 对
+  一切打回都走全文重写,风格闸耗尽的卡打回后重新过结构闸(实证:03:34
+  打回后 threads/outline 全部重跑)。修正:struct_verdict=pass 时打回路由
+  polish_with_feedback(精修带用户意见,用户"将X改为Y"式修正视同处方
+  必须执行),结构闸未过/耗尽仍全文重写。链路:用户直修 1 次 + polish_count
+  随人审重置再满 2 轮;大改需求走 revamp_chapter 全文通道。176 绿。
 
 **ADR-0037 结构闸通过率修复四件套(2026-09-21,《古真神》串行双闸上线后
 outline 0/9 轮诊断,所有者拍板全修)**:诊断分两层——

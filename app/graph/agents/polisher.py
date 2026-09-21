@@ -17,8 +17,8 @@ _SYSTEM = (
     "只改措辞、句式、节奏与冗余,并落实评审'必须修改'中给出的精确处方。"
     "铁律(违反任何一条即失败):\n"
     "1. 不得改变任何事实、人名、称谓、事件顺序、数值、能力边界与信息边界——"
-    "唯一例外:评审意见中以'将X改为Y'形式明确指定的修正必须逐条精确执行,\n"
-    "除此之外的事实层面一律不动;\n"
+    "唯一例外:评审意见或[用户修订意见]中以'将X改为Y'形式明确指定的修正"
+    "必须逐条精确执行,除此之外的事实层面一律不动;\n"
     "2. 不得增删情节、场景或对白的信息量(可压缩冗余,不可新增设定);\n"
     "3. 字数浮动不超过 ±10%;\n"
     "4. [禁用表达]清单中的短语必须全部清除(换写法,不删内容;"
@@ -43,11 +43,16 @@ class PolishDraftNode(BaseAgent):
         }, sid)
         outline_fb = state.get("outline_review", {}).get("feedback") or ""
         quality_fb = state.get("quality_review", {}).get("feedback") or ""
+        decision = state.get("user_input") or {}
+        user_fb = (decision.get("feedback") or ""
+                   if decision.get("action") == "revise" else "")
         ban = "\n".join(f"- {p}" for p in
                         state.get("context_bundle", {}).get("style_ban", []))
         user = (f"[待精校草稿(第{state.get('chapter_no')}章)]\n{state.get('draft', '')}\n\n"
                 f"[评审意见(逐条解决其中的文风问题)]\n"
                 f"大纲评审:{outline_fb}\n质量评审:{quality_fb}"
+                + (f"\n\n[用户修订意见(最高优先级;'将X改为Y'式精确修正"
+                   f"视同处方必须执行;表达层意见逐条落实)]\n{user_fb}" if user_fb else "")
                 + (f"\n\n[禁用表达]\n{ban}" if ban else ""))
 
         def _stream() -> str:

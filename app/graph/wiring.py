@@ -160,7 +160,9 @@ def build_graph(deps: Deps, checkpointer=None):
     g.add_edge("polish_draft", "review_quality")
     g.add_conditional_edges(
         "user_review_chapter", route_after_review,
-        {"rewrite_with_feedback": "write_draft", "finalize": "event_extract"},
+        {"rewrite_with_feedback": "write_draft",
+         "polish_with_feedback": "polish_draft",   # 结构已过的打回:风格节点续修(ADR-0036)
+         "finalize": "event_extract"},
     )
 
     # 定稿管道:抽取 -> [角色更新 ∥ 实体消歧 ∥ 摘要] -> 单事务定稿(fan-out/fan-in)

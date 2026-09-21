@@ -38,8 +38,13 @@ def route_after_style_review(state: GraphState) -> str:
 
 
 def route_after_review(state: GraphState) -> str:
+    """人审打回分阶段(ADR-0036):结构闸已过(struct_verdict=pass)的打回
+    从风格节点续修——精校带用户意见,不全文重掷、不重过结构闸;
+    结构闸本身未过/耗尽的打回仍走全文重写。"""
     decision = state.get("user_input") or {}
     if decision.get("action") == "revise":
+        if state.get("struct_verdict") == "pass":
+            return "polish_with_feedback"
         return "rewrite_with_feedback"
     return "finalize"
 

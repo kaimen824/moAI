@@ -227,6 +227,24 @@ def test_serial_gate_routing():
     assert route_after_style_review({}) == "polish"            # 缺省安全侧精校
 
 
+def test_user_revise_staged_routing():
+    """人审打回分阶段(ADR-0036):结构闸已过 -> 精修续跑(不重过结构闸);
+    结构闸未过/耗尽 -> 全文重写;确认 -> 定稿。"""
+    from app.graph.routes import route_after_review
+
+    revise = {"action": "revise", "feedback": "比喻太多"}
+    # 结构已过(风格阶段的中断卡):精修带用户意见
+    assert route_after_review({"user_input": revise, "struct_verdict": "pass"}) \
+        == "polish_with_feedback"
+    # 结构闸耗尽(struct_verdict=needs_user):全文重写
+    assert route_after_review({"user_input": revise,
+                               "struct_verdict": "needs_user"}) \
+        == "rewrite_with_feedback"
+    assert route_after_review({"user_input": revise}) == "rewrite_with_feedback"
+    # 确认 -> 定稿
+    assert route_after_review({"user_input": {"action": "confirm"}}) == "finalize"
+
+
 # ---------- 新细纲格式仍可解析 ----------
 
 def test_parse_stage_range_with_tension_plan(deps):
