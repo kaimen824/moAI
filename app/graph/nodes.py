@@ -175,7 +175,14 @@ def build_context(state: GraphState, deps: Deps) -> dict:
         limit = THREAD_LONG_AGE if tier == "long" else THREAD_SHORT_AGE
         t["_overdue"] = bool(
             planted and chapter_no - planted > limit and not t.get("escalated_chapter"))
-    bundle["style_ban"] = deps.recent_phrase_blacklist(state["story_id"], chapter_no)
+    # 剧情承载短语豁免(ADR-0035):要点/细纲/活跃伏笔/上期衔接触及的短语
+    # 不进禁用清单——剧情死线跨章高频是叙事骨架,不是复读口头禅
+    excl = [state.get("chapter_brief", ""), state.get("stage_outline", "")]
+    excl += [t.get("description", "") for t in result.active_threads]
+    excl.append(bundle.get("carryover") or "")
+    bundle["style_ban"] = deps.recent_phrase_blacklist(
+        state["story_id"], chapter_no,
+        exclude_texts=[t for t in excl if t])
     # ADR-0019 规范名词典:叙述层统一用名(实体表 canonical + 别名)
     bundle["canonical_names"] = deps.canonical_entity_registry(state["story_id"])
     present = set(present_ids)

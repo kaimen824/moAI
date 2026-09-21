@@ -53,9 +53,10 @@ class RecapBuilder(Protocol):
 
 
 class StylePolicy(Protocol):
-    """叙述风格策略:动态句式黑名单 + 规范名词典(ADR-0017/0019)。"""
+    """叙述风格策略:动态句式黑名单 + 规范名词典(ADR-0017/0019/0035)。"""
 
-    def recent_phrase_blacklist(self, story_id: str, chapter_no: int) -> list[str]: ...
+    def recent_phrase_blacklist(self, story_id: str, chapter_no: int, *,
+                                exclude_texts: list[str] | None = None) -> list[str]: ...
     def canonical_entity_registry(self, story_id: str) -> list[dict]: ...
 
 

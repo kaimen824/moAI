@@ -308,7 +308,8 @@ class SqliteStylePolicy:
 
     def recent_phrase_blacklist(self, story_id: str, chapter_no: int, *,
                                 window: int = 5, min_freq: int = 3,
-                                min_chapters: int = 2, limit: int = 12) -> list[str]:
+                                min_chapters: int = 2, limit: int = 12,
+                                exclude_texts: list[str] | None = None) -> list[str]:
         """动态句式自检(ADR-0017):近 K 章高频复现的中文短语 -> 本章禁用清单。
 
         题材无关、随书自适应(替代硬编码句式黑名单):4-gram 计数,仅统计
@@ -320,6 +321,8 @@ class SqliteStylePolicy:
         实体指称排除(ADR-0019):与实体名/别名/角色名互为子串的短语不入清单——
         剧情连续章指称同一地点/机构是正常指称密度,不是复读口头禅
         (ch10"精神病院"12 次进黑名单、评审每轮开替换处方的实证)。
+        剧情承载短语排除(ADR-0035):exclude_texts(本章要点/细纲/伏笔/衔接)
+        交叠的短语不入清单,理由同上(《古真神》ch4"月圆之约"实证)。
         """
         with self.run_lock:
             rows = self.conn.execute(
@@ -401,6 +404,20 @@ class SqliteStylePolicy:
         if protected:
             phrases = {p: c for p, c in phrases.items()
                        if not any((p in n or n in p) for n in protected)}
+
+        # 剧情承载短语排除(ADR-0035):与本章要点/阶段细纲/活跃伏笔/上期衔接
+        # 有 ≥3 字交叠的短语不入清单——"月圆之约"这类剧情死线跨章高频是叙事
+        # 骨架,进了清单即评审-重写死锁(《古真神》ch4 实证:style 三轮锁 6.0,
+        # 同义变体全被抓,3 轮耗尽转人工)。与 ADR-0019 实体排除同族:
+        # 口头禅是修饰层,剧情词是内容层,禁内容层等于禁剧情
+        if exclude_texts:
+            excl_grams: set[str] = set()
+            for text in exclude_texts:
+                for run in re.findall(r"[一-鿿]+", text or ""):
+                    excl_grams |= {run[i:i + 3] for i in range(len(run) - 2)}
+            phrases = {p: c for p, c in phrases.items()
+                       if not any(p[i:i + 3] in excl_grams
+                                  for i in range(len(p) - 2))}
 
         # 去包含:短语被更长高频短语覆盖时丢弃
         ordered = sorted(phrases, key=lambda p: (-len(p), p))

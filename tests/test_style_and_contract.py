@@ -122,6 +122,29 @@ def test_recent_phrase_blacklist_empty_history(deps):
     assert d.recent_phrase_blacklist(story_id, 1) == []
 
 
+def test_recent_phrase_blacklist_exempts_plot_phrases(deps):
+    """剧情承载短语排除(ADR-0035,《古真神》ch4 死锁回归):跨章高频但出现在
+    本章要点/伏笔描述中的短语(如剧情死线'月圆之约')不入清单;口头禅不受
+    豁免影响。"""
+    d, conn = deps
+    story_id, branch = d.repo.create_story("剧情词豁免", "测试")
+    deadline = "月圆之约"
+    tic = "他的大脑飞速运转起来"
+    for no in range(1, 5):
+        _ins_chapter(conn, story_id, branch, no,
+                     f"苏家使者重申{deadline},限期已定。{tic},他有了主意。")
+    _ins_chapter(conn, story_id, branch, 5, "平静的一章。" * 10)
+
+    # 不带豁免:剧情死线进清单(死锁形态)
+    ban_plain = d.recent_phrase_blacklist(story_id, 6)
+    assert any("月圆之约" in p for p in ban_plain)
+    # 带豁免(要点/伏笔提及该短语):剧情词剔除,口头禅保留
+    ban = d.recent_phrase_blacklist(story_id, 6,
+                                    exclude_texts=["本章要点:直面苏家的月圆之约"])
+    assert not any("月圆" in p for p in ban)
+    assert any("大脑飞速运转" in p for p in ban)
+
+
 def _ins_entity(conn, story_id, name, etype="faction"):
     import uuid
     from app.graph.runtime import _now

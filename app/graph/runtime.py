@@ -156,10 +156,11 @@ class Deps:
     # ---- 叙述风格策略(端口 StylePolicy)----
     def recent_phrase_blacklist(self, story_id: str, chapter_no: int, *,
                                 window: int = 5, min_freq: int = 3,
-                                min_chapters: int = 2, limit: int = 12) -> list[str]:
+                                min_chapters: int = 2, limit: int = 12,
+                                exclude_texts: list[str] | None = None) -> list[str]:
         return self._style.recent_phrase_blacklist(
             story_id, chapter_no, window=window, min_freq=min_freq,
-            min_chapters=min_chapters, limit=limit)
+            min_chapters=min_chapters, limit=limit, exclude_texts=exclude_texts)
 
     def canonical_entity_registry(self, story_id: str, *, cap: int = 60) -> list[dict]:
         return self._style.canonical_entity_registry(story_id, cap=cap)
