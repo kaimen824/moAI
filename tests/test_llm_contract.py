@@ -117,7 +117,7 @@ def test_quality_review_degrades_to_revise(tmp_path):
                 "rewrite_count": 0, "context_bundle": {}}, deps)
     review = out["quality_review"]
     assert review["verdict"] == "revise"          # 安全默认返工,绝非 pass
-    assert review["fix_scope"] == "content"
+    assert review["fix_scope"] == "style"         # 风格闸职责边界:content 不在选项(ADR-0036)
     assert "trace=" in review["feedback"]
     assert conn.execute("SELECT COUNT(*) c FROM llm_failures"
                         " WHERE stage='review_quality'").fetchone()["c"] == 1
