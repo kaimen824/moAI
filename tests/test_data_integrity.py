@@ -106,6 +106,32 @@ def test_render_context_splits_pending_section():
     assert "严禁作为确定事实" in tail
 
 
+def test_render_context_beliefs_attributed_and_capped():
+    """ADR-0041(所有者指出认知串位):beliefs 渲染必须标注认知主体与章号,
+    不得匿名混排;超过 24 条按新近度截断并注明省略。"""
+    state = {"context_bundle": {
+        "characters": [
+            {"id": "c1", "name": "沈砚", "profile": ""},
+            {"id": "c2", "name": "白芷", "profile": ""},
+        ],
+        "beliefs": [
+            {"character_id": "c1", "content": "沈砚以为古碑是凡物",
+             "established_chapter": 3},
+            {"character_id": "c2", "content": "白芷误信师兄已死",
+             "established_chapter": 2},
+            *({"character_id": "c1", "content": f"旧认知{i}",
+               "established_chapter": 1} for i in range(24)),
+        ],
+    }}
+    text = render_context(state)
+    head, tail = text.split("[角色认知", 1)
+    assert "沈砚(ch3): 沈砚以为古碑是凡物" in tail      # 归属+章号
+    assert "白芷(ch2): 白芷误信师兄已死" in tail
+    assert "不得跨角色引用" in tail                     # 边界条款入提示词
+    assert "旧认知21" in tail and "旧认知22" not in tail  # 26 条取新 24:2 新 + 22 旧
+    assert "另有 2 条更早的认知已省略" in tail
+
+
 # ---------- 6.6 向量兜底分级硬过滤 ----------
 
 def test_vector_fallback_filters_information_gap(eng):

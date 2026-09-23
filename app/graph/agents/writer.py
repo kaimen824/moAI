@@ -70,8 +70,23 @@ def render_context(state: dict, *, max_facts: int = 40) -> str:
                 "[低置信线索(尚未经事实审核确认,只能作为暗线/伏笔素材铺陈, "
                 "严禁作为确定事实或角色确知信息写入正文)]\n" + pl)
     if bundle.get("beliefs"):
-        bl = "\n".join(f"- {b['content']}" for b in bundle["beliefs"])
-        parts.append(f"[角色认知(可能包含误信)]\n{bl}")
+        # 认知主体必须标注(ADR-0041,所有者指出):多角色 beliefs 混在匿名
+        # 清单里,写手会把 A 的误信写进 B 的内心;同款新近度截断防爆上下文
+        bl_sorted = sorted(
+            bundle["beliefs"],
+            key=lambda b: b.get("established_chapter") or 0, reverse=True)
+        shown, hidden = bl_sorted[:24], bl_sorted[24:]
+        names = {c.get("id"): c.get("name", "该角色")
+                 for c in bundle.get("characters", [])}
+        bl = "\n".join(
+            f"- {names.get(b.get('character_id'), '该角色')}"
+            f"(ch{b.get('established_chapter', '?')}): {b['content']}"
+            for b in shown)
+        if hidden:
+            bl += f"\n(另有 {len(hidden)} 条更早的认知已省略)"
+        parts.append(
+            "[角色认知(每条标注归属角色;是该角色视角的内心认知,可能包含"
+            "误信,不得跨角色引用或写入他人内心)]\n" + bl)
     if bundle.get("vector_hits"):
         vh = "\n".join(
             f"- [ch{h.get('chapter_established', '?')}] {h['content']}"
