@@ -18,8 +18,16 @@ _SYSTEM = (
     "你只评文风与表达层。严格按 JSON 输出:"
     '{"verdict":"pass|revise|block","scores":{"consistency":0-10,"foreshadow":0-10,"style":0-10},'
     '"fix_scope":"style|local",'
-    '"feedback":"具体修改意见"}。'
-    "任一维度低于 7 分给 revise。\n"
+    '"feedback":"具体修改意见"}。\n'
+    "判定纪律(ADR-0040,带意见通过——评审是编辑视角不是零瑕疵验收):\n"
+    "- consistency/foreshadow 低于 7 → revise(客观缺陷);\n"
+    "- **style 单维不致 revise**:长文必然存在可改进的表达层细节,发现即"
+    "失败会让精校循环永无止境。style<5(整段级复读/表达层严重失控)才"
+    "revise;style≥5 时即使有可改进处也给 pass,**处方照常写入 feedback**"
+    "(意见随中断卡供作者参考)。\n"
+    "- 复检纪律:输入若附[上轮已套用编辑],其中已落实的修改不得再提——"
+    "复审只看两点:已修处是否真正解决(未解决且严重才重提,注明'上轮"
+    "处方未达预期'),以及是否有**新发现**;不得换个说法复述旧意见。\n"
     "fix_scope 只有两档——你的全部发现必须可由精校(表达层局部修订)落实,"
     "超出的归结构闸,不归你:\n"
     "- style:纯文风问题(措辞/节奏/冗余/复读表达/比喻句式堆叠);\n"
@@ -60,6 +68,10 @@ class QualityReviewNode(BaseAgent):
         tr_lines = "\n".join(
             f"- [{c.get('action', '?')}] {c.get('description', '')}"
             for c in tr.get("thread_changes", []))
+        edits = state.get("last_polish_edits") or []
+        edit_lines = "\n".join(
+            f"- {e.get('find', '')[:40]!r} → {e.get('replace', '')[:40]!r}"
+            for e in edits)
         floor = get_settings().chapter_min_chars
         length_note = (f"\n\n[字数下限:{floor} 字;本章草稿实际 {len(state.get('draft') or '')} 字,"
                        "低于下限必须 revise]" if floor > 0 else "")
@@ -68,6 +80,8 @@ class QualityReviewNode(BaseAgent):
                 f"{bundle.get('carryover', '')}"
                 + (f"\n\n[本章伏笔变更(伏笔评审已判定,供 foreshadow 维度参照)]\n{tr_lines}"
                    if tr_lines else "")
+                + (f"\n\n[上轮已套用编辑(已落实,不得重提;复审只看是否真解决与新发现)]\n{edit_lines}"
+                   if edit_lines else "")
                 + (f"\n\n[禁用表达(近章高频复现,本章出现即 style 记低分)]\n{ban}" if ban else "")
                 + length_note)
         try:

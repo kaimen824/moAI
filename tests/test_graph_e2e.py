@@ -627,20 +627,20 @@ def test_polish_budget_exhaustion_style_gate(tmp_path):
 
     stages = [r["stage"] for r in conn.execute(
         "SELECT stage FROM agent_traces ORDER BY created_at").fetchall()]
-    assert stages.count("polish") == 2                # 精校恰好 STYLE_POLISH_LIMIT 轮
+    assert stages.count("polish") == 5                # 精校恰好 STYLE_POLISH_LIMIT(=5)轮
     assert stages.count("draft") == 1                 # 风格闸永不全量重写(结构成果不被翻掉)
-    assert stages.count("review_quality") == 3        # 首检 + 两轮精校复检
+    assert stages.count("review_quality") == 6        # 首检 + 5 轮精校复检
 
     # 分阶段打回(ADR-0036):结构已过的中断卡,打回走精修续跑——不重掷全文、
-    # 不重过结构闸;链路 = 用户意见直修 1 次 + 闸内重置后再满 2 轮
+    # 不重过结构闸;链路 = 用户意见直修 1 次 + 闸内重置后再满 5 轮
     result = graph.invoke(Command(resume={"action": "revise",
                                           "feedback": "比喻太多"}), cfg)
     assert result["__interrupt__"][0].value["type"] == "user_review_chapter"
     stages = [r["stage"] for r in conn.execute(
         "SELECT stage FROM agent_traces ORDER BY created_at").fetchall()]
     assert stages.count("draft") == 1                 # 打回后仍零全文重写
-    assert stages.count("polish") == 5                # 2 + 用户直修1 + 闸内再2
-    assert stages.count("review_quality") == 6        # 3 + 复检3
+    assert stages.count("polish") == 11               # 5 + 用户直修1 + 闸内再5
+    assert stages.count("review_quality") == 12       # 6 + 复检6
     assert stages.count("review_draft_outline") == 1  # 结构闸不重跑
 
 

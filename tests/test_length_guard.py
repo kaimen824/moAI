@@ -114,3 +114,32 @@ def test_reviewer_prompt_carries_length_note(env):
         {"story_id": "s1", "draft": "短", "context_bundle": {}}, deps)
     assert "[字数下限:100 字" in captured["user"]
     assert "实际 1 字" in captured["user"]
+
+
+def test_reviewer_prompt_carries_edit_receipt(env):
+    """上轮编辑回执进入评审输入(ADR-0040 复检防翻旧账)。"""
+    deps, conn = env
+    from app.graph.agents.quality_reviewer import QualityReviewNode
+    captured = {}
+
+    def override(stage: str):
+        if stage != "review_quality":
+            return None
+        return R(content='{"verdict":"pass","scores":{"consistency":9,'
+                         '"foreshadow":9,"style":9},"fix_scope":"style",'
+                         '"feedback":"ok"}', model="fake")
+
+    deps.llm._response_override = override
+    orig = deps.llm.chat
+
+    def spy(role, messages, **kw):
+        captured["user"] = messages[-1].content
+        return orig(role, messages, **kw)
+
+    deps.llm.chat = spy
+    QualityReviewNode(deps.llm)(
+        {"story_id": "s1", "draft": "正文", "context_bundle": {},
+         "last_polish_edits": [{"find": "昏黄的灯", "replace": "暖黄的灯"}]},
+        deps)
+    assert "[上轮已套用编辑" in captured["user"]
+    assert "昏黄的灯" in captured["user"]

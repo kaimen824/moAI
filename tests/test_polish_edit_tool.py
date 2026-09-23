@@ -73,11 +73,13 @@ def _node_run(deps, draft=TEXT, **extra):
 
 
 def test_edit_tool_normal_path(env):
-    """命中编辑:原稿局部替换,未触及部分逐字保留;单次调用。"""
+    """命中编辑:原稿局部替换,未触及部分逐字保留;单次调用;
+    编辑回执随 state 返回(ADR-0040:复检防翻旧账)。"""
     deps, script = env
     script["responses"] = [_edits(("昏黄的灯", "暖黄的灯"))]
     out = _node_run(deps)
     assert out["draft"] == TEXT.replace("昏黄的灯", "暖黄的灯")
+    assert out["last_polish_edits"] == [{"find": "昏黄的灯", "replace": "暖黄的灯"}]
 
 
 def test_edit_tool_empty_edits_returns_original(env):

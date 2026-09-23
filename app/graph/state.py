@@ -47,6 +47,7 @@ class GraphState(TypedDict, total=False):
     rewrite_exhausted: bool       # 结构闸重写上限耗尽 -> 交用户裁决
     polish_count: int             # 风格闸精校轮次(ADR-0036 串行修复:结构过 -> 风格循环)
     polish_exhausted: bool        # 风格闸精校上限耗尽 -> 交用户裁决
+    last_polish_edits: list[dict] # 上轮已套用编辑回执(ADR-0040:复检防翻旧账)
 
     # ---- 定稿(编排原子性:暂存变更集)----
     fact_changes: dict            # 事件管理抽取(facts/beliefs/visibility/entities/links)

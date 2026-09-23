@@ -10,7 +10,7 @@ from langgraph.graph import END
 from app.graph.state import GraphState
 
 REWRITE_LIMIT = 3   # ADR-0007 裁决 4(可配置)——结构闸(大纲一致性)重写上限
-STYLE_POLISH_LIMIT = 2      # 风格闸精校上限(ADR-0036 串行修复,独立计数)
+STYLE_POLISH_LIMIT = 5      # 风格闸精校上限(ADR-0036 串行修复;2026-09-21 所有者调至 5)
 STAGE_REGEN_LIMIT = 3        # 细纲重生成上限:超过自动转用户(行业惯例:escalate to human)
 MASTER_REGEN_LIMIT = 3       # 总大纲重生成上限(ADR-0016:与细纲/重写同口径)
 

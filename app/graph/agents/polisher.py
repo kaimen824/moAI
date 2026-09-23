@@ -118,11 +118,12 @@ class PolishDraftNode(BaseAgent):
             if applied:   # 命中任一编辑即成立;全部失配回退全文
                 if streaming:
                     deps.emit("token", {"text": draft}, sid)
-                return {"draft": draft}
+                # 编辑回执(ADR-0040):供复检评审核对"已落实的修改",防翻旧账
+                return {"draft": draft, "last_polish_edits": applied}
 
-        # 模式 B 兜底:全文重写(旧行为)
+        # 模式 B 兜底:全文重写(旧行为);无编辑回执可附
         draft = self._polish_full(state, deps, user, streaming)
-        return {"draft": draft}
+        return {"draft": draft, "last_polish_edits": []}
 
     # ---- 内部 ----
 

@@ -140,7 +140,8 @@ def user_review_chapter(state: GraphState, deps: Deps) -> dict:
     if decision.get("action") == "revise":
         # 用户意见驱动的重写独立计数:重置,不与自动重写共享上限
         update.update({"rewrite_count": 0, "rewrite_exhausted": False,
-                       "polish_count": 0, "polish_exhausted": False})
+                       "polish_count": 0, "polish_exhausted": False,
+                       "last_polish_edits": []})
     return update
 
 
@@ -290,6 +291,7 @@ def next_chapter(state: GraphState, deps: Deps) -> dict:
     is_stage_first = (done + 1 > stage_end) or not state.get("stage_outline")
     reset = {"rewrite_count": 0, "rewrite_exhausted": False,
              "polish_count": 0, "polish_exhausted": False,
+             "last_polish_edits": [],       # 编辑回执不跨章残留(ADR-0040)
              "quality_review": {},          # 上一章风格意见不得串入本章结构循环(串行闸门)
              "revamp_pending": False, "revamp_done": False}   # revamp 标记不跨章残留
     if is_stage_first:

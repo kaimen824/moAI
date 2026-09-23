@@ -61,6 +61,7 @@ class NodeRunner:
             "rewrite_exhausted": False,
             "polish_count": 0,           # 串行双闸计数不跨次残留(ADR-0036)
             "polish_exhausted": False,
+            "last_polish_edits": [],     # 编辑回执不跨次残留(ADR-0040)
             "quality_review": {},        # 上一轮风格意见不得串入本次结构闸
         }
         graph.update_state(cfg, values, as_node="chapter_slice")

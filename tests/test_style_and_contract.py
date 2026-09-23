@@ -245,6 +245,15 @@ def test_user_revise_staged_routing():
     assert route_after_review({"user_input": {"action": "confirm"}}) == "finalize"
 
 
+def test_quality_contract_threshold_and_no_reedit():
+    """ADR-0040 契约防回退:style 单维不致 revise(带意见通过)+
+    编辑回执不重提条款必须存在于 quality 契约。"""
+    from app.graph.agents import quality_reviewer as q
+
+    assert "style 单维不致 revise" in q._SYSTEM
+    assert "不得再提" in q._SYSTEM
+
+
 # ---------- 新细纲格式仍可解析 ----------
 
 def test_parse_stage_range_with_tension_plan(deps):
