@@ -1011,3 +1011,21 @@ beliefs 混在匿名清单里,写手无从分辨归属,会把 A 角色的误信�
 写入他人内心";同款新近度截断(24 条 + 省略标注)。测试:
 test_render_context_beliefs_attributed_and_capped(归属/章号/边界条款/
 截断省略)。185 绿 + 契约 KEPT。
+
+**ADR-0042 graph_canvas 画布精细化:分组布局+节点语义元数据(2026-09-26,所有者指出显示粗糙)**
+:背景——画布 v2 功能完整但视觉粗糙:节点只有英文 ID,dagre 直排 25 节点
+挤成一列纵队、回环边绕大弧交叉,三阶段(共创/生产循环/定稿)无分组,
+Unicode 字符冒充图标,CSS 无 token 体系、边色对比度不足。两个决策:
+①分组布局选 **dagre 分区拼装**而非 elkjs——零新依赖(25 节点规模不值得
+引入 1.5MB 布局引擎),组内 dagre 自动、组间按依赖顺序纵向堆叠、跨组边
+smoothstep 圆角折线,visual 可接近专业布局;②节点语义元数据(中文名/
+分组/图标/一句话职责)以 **extract_graph.py 的 NODE_META 为单一来源**
+(代码即真相原则的延伸:改图结构必然同步改导出器),未登记节点(新增/
+改名)fallback 降级——中文名缺省用原名、不进组、图标按 kind 兜底,不
+报错不挡图;version 哈希纳入 meta,改语义即触发前端重绘。顺带:卡片重做
+(图标+中文名主行/英文ID mono 副行/状态旗标)、条件边虚线区分直通边、
+style.css 全量 token 化(色板/间距/圆角/阴影/字号五组变量)、图标换
+@phosphor-icons/react(与主前端同一套视觉语言)。已知遗留:minimap 在
+headless 截图下内容层不渲染(原版同样,非本次回归),真实浏览器待确认。
+测试:meta_of fallback/登记项单元验证;全量 186 绿(1 存量失败
+test_role_routing_reaches_client 为 deepseek provider 未注册,与本改动无关)。

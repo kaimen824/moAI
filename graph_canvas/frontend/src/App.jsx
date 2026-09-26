@@ -2,11 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, Panel, MarkerType, useReactFlow,
 } from '@xyflow/react'
+import { ArrowDown, ArrowRight, CornersOut } from '@phosphor-icons/react'
 import NodeCard, { KIND } from './NodeCard.jsx'
 import { layoutGraph } from './layout.js'
 import { getGraph, getThreads, getRun, getState } from './api.js'
 
-const nodeTypes = { card: NodeCard, term: NodeCard }
+const nodeTypes = { card: NodeCard, term: NodeCard, groupbox: GroupBox }
+
+/* 阶段分组容器:纯背景(不可交互、完全穿透),只画边界与组名 */
+function GroupBox({ data }) {
+  return (
+    <div className="gbox" style={{ width: '100%', height: '100%', borderColor: `${data.accent}44` }}>
+      {data.zh && (
+        <div className="gbox-title" style={{ color: data.accent }}>
+          <span className="gbox-chip" style={{ background: `${data.accent}33`, borderColor: `${data.accent}66` }} />
+          {data.zh}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function App() {
   return (
@@ -122,11 +137,26 @@ function Canvas() {
     }
   }, [run, pos])
 
+  /* ---- 布局(仅结构/方向变化时重算;dagre 确定性,同输入同输出) ---- */
+  const layout = useMemo(
+    () => (graph ? layoutGraph(graph, dir) : null),
+    [graph, dir],
+  )
+
   /* ---- 画布元素 ---- */
   const nodes = useMemo(() => {
-    if (!graph) return []
-    const positions = layoutGraph(graph, dir)
-    return graph.nodes.map((n) => {
+    if (!graph || !layout) return []
+    const groupNodes = layout.boxes.filter((b) => b.zh).map((b) => ({
+      id: `grp:${b.key}`,
+      type: 'groupbox',
+      position: { x: b.x, y: b.y },
+      data: { zh: b.zh, accent: b.accent },
+      style: { width: b.w, height: b.h, pointerEvents: 'none' },
+      draggable: false, selectable: false, deletable: false,
+      zIndex: 0,
+    }))
+    const positions = layout.positions
+    const cards = graph.nodes.map((n) => {
       let status = null                                    // null = 结构模式(无运行信息)
       if (flow && n.kind !== 'terminal') {
         if (flow.errorNodes.has(n.id)) status = 'error'
@@ -140,41 +170,46 @@ function Canvas() {
         id: n.id,
         type: n.kind === 'terminal' ? 'term' : 'card',
         position: positions[n.id] || { x: 0, y: 0 },
+        zIndex: 1,
         data: {
-          id: n.id, label: n.label, kind: n.kind, status,
+          id: n.id, label: n.label, kind: n.kind, status, meta: n.meta,
           count: flow?.execCount[n.id] || 0,
           interruptedEver: flow?.interruptedEver.has(n.id) || false,
         },
       }
     })
-  }, [graph, dir, flow, run, pos])
+    return [...groupNodes, ...cards]
+  }, [graph, layout, flow, run, pos])
 
   const edges = useMemo(() => {
     if (!graph) return []
     return graph.edges.map((e) => {
       const key = `${e.source}->${e.target}`
+      const dash = e.conditional ? '6 4' : undefined
+      const base = {
+        id: key, source: e.source, target: e.target,
+        type: 'smoothstep', pathOptions: { borderRadius: 14 },
+        label: e.label || undefined,
+        labelStyle: { fill: '#93a5c0', fontSize: 10.5, fontFamily: 'inherit', fontWeight: 500 },
+        labelBgStyle: { fill: '#0d1626', fillOpacity: 0.96, stroke: '#233450', strokeWidth: 1 },
+        labelBgPadding: [4, 2], labelBgBorderRadius: 4,
+      }
       if (!flow) {                                         // 结构模式:统一中性边
         return {
-          id: key, source: e.source, target: e.target, label: e.label || undefined,
-          style: { stroke: '#33507a', strokeWidth: 1.6 },
-          labelStyle: { fill: '#7c8ba1', fontSize: 10, fontFamily: 'inherit' },
-          labelBgStyle: { fill: '#0b1220', fillOpacity: 0.9 },
-          labelBgPadding: [3, 1], labelBgBorderRadius: 3,
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#33507a', width: 16, height: 16 },
+          ...base,
+          style: { stroke: '#46689b', strokeWidth: 1.6, strokeDasharray: dash },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#46689b', width: 15, height: 15 },
         }
       }
       const at = flow.edgeTakenAt[key]
       const now = at !== undefined && at === pos
-      const stroke = at === undefined ? '#1c2739' : now ? '#38bdf8' : '#3d5a80'
+      const stroke = at === undefined ? '#2a3a52' : now ? '#38bdf8' : '#5d7fae'
       return {
-        id: key, source: e.source, target: e.target,
-        label: e.label || undefined,
+        ...base,
         animated: now,
-        style: { stroke, strokeWidth: at !== undefined ? 2.4 : 1.4 },
-        labelStyle: { fill: now ? '#7dd3fc' : '#7c8ba1', fontSize: 10, fontFamily: 'inherit' },
-        labelBgStyle: { fill: '#0b1220', fillOpacity: 0.9 },
-        labelBgPadding: [3, 1], labelBgBorderRadius: 3,
-        markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
+        style: { stroke, strokeWidth: at !== undefined ? 2.4 : 1.4, strokeDasharray: dash },
+        labelStyle: { ...base.labelStyle, fill: now ? '#7dd3fc' : '#93a5c0' },
+        markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 15, height: 15 },
       }
     })
   }, [graph, flow, pos])
@@ -182,7 +217,7 @@ function Canvas() {
   /* 布局/结构变化后自动 fit;用户一旦手动挪动就不再抢视口 */
   useEffect(() => {
     if (graph && autoFitRef.current) {
-      const t = setTimeout(() => fitView({ padding: 0.12, duration: 300 }), 60)
+      const t = setTimeout(() => fitView({ padding: 0.06, duration: 300 }), 60)
       return () => clearTimeout(t)
     }
   }, [graph, dir, fitView])
@@ -207,11 +242,13 @@ function Canvas() {
     if (next !== undefined) setPos(next)
   }
 
-  const mmColor = (n) => (n.data.status == null
-    ? (KIND[n.data.kind]?.c || '#263449')
-    : n.data.status === 'active' ? '#38bdf8'
-      : n.data.status === 'interrupt' || n.data.status === 'error' ? '#ef4444'
-        : n.data.status === 'done' ? '#1f7a45' : '#263449')
+  const mmColor = (n) => (n.type === 'groupbox'
+    ? (n.data.accent || '#1b2940')
+    : n.data.status == null
+      ? (KIND[n.data.kind]?.c || '#3a4f6e')
+      : n.data.status === 'active' ? '#38bdf8'
+        : n.data.status === 'interrupt' || n.data.status === 'error' ? '#ef4444'
+          : n.data.status === 'done' ? '#1f7a45' : '#3a4f6e')
 
   return (
     <div className="app">
@@ -243,7 +280,10 @@ function Canvas() {
         <div className="legend">
           <div className="lg-title">图例</div>
           {Object.entries(KIND).filter(([, v]) => v.label).map(([k, v]) => (
-            <div key={k} className="lg-row"><i style={{ background: v.c }} />{v.label}</div>
+            <div key={k} className="lg-row">
+              <span className="lg-ic" style={{ color: v.c }}>{v.Icon && <v.Icon size={13} weight="duotone" />}</span>
+              {v.label}
+            </div>
           ))}
           {run && (
             <>
@@ -261,19 +301,25 @@ function Canvas() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          onNodeClick={(_, n) => setSelNode(n.id === selNode ? null : n.id)}
+          onNodeClick={(_, n) => { if (n.type !== 'groupbox') setSelNode(n.id === selNode ? null : n.id) }}
           onPaneClick={() => setSelNode(null)}
           onMoveStart={() => { autoFitRef.current = false }}
           minZoom={0.08}
           proOptions={{ hideAttribution: true }}
         >
-          <Background variant="dots" gap={26} color="#16202f" />
+          <Background variant="dots" gap={26} color="#141d2e" />
           <Controls showInteractive={false} />
-          <MiniMap pannable zoomable nodeColor={mmColor} nodeStrokeWidth={0} maskColor="rgba(3, 7, 15, 0.78)" style={{ background: '#0b1220' }} />
+          <MiniMap pannable zoomable nodeColor={mmColor} nodeStrokeWidth={0} maskColor="rgba(3, 7, 15, 0.78)" style={{ background: '#0b1220', border: '1px solid var(--border)' }} />
           <Panel position="top-right" className="topbar">
-            <button onClick={() => { autoFitRef.current = true; fitView({ padding: 0.12, duration: 300 }) }}>适应</button>
-            <button className={dir === 'TB' ? 'on' : ''} onClick={() => { setDir('TB'); autoFitRef.current = true }}>↓ 纵向</button>
-            <button className={dir === 'LR' ? 'on' : ''} onClick={() => { setDir('LR'); autoFitRef.current = true }}>→ 横向</button>
+            <button onClick={() => { autoFitRef.current = true; fitView({ padding: 0.06, duration: 300 }) }} title="适应视口">
+              <CornersOut size={13} /> 适应
+            </button>
+            <button className={dir === 'TB' ? 'on' : ''} onClick={() => { setDir('TB'); autoFitRef.current = true }}>
+              <ArrowDown size={13} /> 纵向
+            </button>
+            <button className={dir === 'LR' ? 'on' : ''} onClick={() => { setDir('LR'); autoFitRef.current = true }}>
+              <ArrowRight size={13} /> 横向
+            </button>
             <span className="ver">结构 {versionRef.current || '…'}</span>
           </Panel>
         </ReactFlow>

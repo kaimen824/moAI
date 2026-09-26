@@ -19,6 +19,8 @@ GRAPH_DB=路径/到/别的库 python serve.py                    # 换重放数�
 
 - **左栏**:运行线程列表(章数/步数/停住的中断点),点击载入回放
 - **画布**:滚轮缩放、拖拽平移、minimap、节点可拖动;点击节点看执行履历(次数、每步写入了哪些状态)
+- **阶段分组**(ADR-0042):共创前置 / 章节生产循环 / 定稿管道三组分容器;组内 dagre 自动布局,组间按依赖顺序堆叠;条件边虚线、直通边实线
+- **节点卡片**:图标 + 中文名主行 / 英文 ID(mono)副行;hover 出一句话职责;回放模式带执行次数徽章与状态旗标(执行中/暂停于此/异常)
 - **时间轴**(底部):拖动/步进按 super-step 回放,`▶` 播放,`◀◉/◉▶` 在中断点与异常之间跳转
 - **右侧抽屉**:当前步骤的 state diff(绿=新增,黄=变更,红=删除;含 branch 路由决策)
 - 快捷键:`←/→` 步进,`空格` 播放/暂停
@@ -28,7 +30,7 @@ GRAPH_DB=路径/到/别的库 python serve.py                    # 换重放数�
 
 ```
 结构层  app/graph/build.py ─(子进程 extract_graph.py)→ public/graph.json
-        前端轮询 version(结构内容哈希),变了才重布局
+        前端轮询 version(结构内容哈希,含 NODE_META 语义),变了才重布局
 
 流转层  data/novel_agent.db(只读)
         checkpoints(时序/updated_channels) + writes(branch:to:*/__interrupt__/__resume__/__error__)
