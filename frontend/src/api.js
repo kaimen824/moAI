@@ -122,6 +122,24 @@ export const api = {
   deleteStory: (id) => j(`/stories/${id}`, { method: "DELETE" }),
   storyDetail: (id) => j(`/stories/${id}`),
   chapter: (id, no) => j(`/stories/${id}/chapters/${no}`),
+  /** 全文导出 TXT:响应是文件流不是 JSON,fetch -> blob -> a[download]。 */
+  exportTxt: async (id, title) => {
+    const doFetch = () => fetch(`${BASE}/stories/${id}/export`, { headers: authHeaders() });
+    let r = await doFetch();
+    if (r.status === 401 && (await refreshOnce())) {
+      r = await doFetch();          // 续期成功,重试一次
+    }
+    if (r.status === 401) {
+      onUnauthorized(`${BASE}/stories/${id}/export -> 401(export)`);
+      throw new Error("401 未登录或会话已过期");
+    }
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement("a"),
+      { href: url, download: `${title || "novel"}.txt` });
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   generate: (id, payload, onEvent) => sse(`/stories/${id}/generate`, payload, onEvent),
   resume: (id, payload, onEvent) => sse(`/stories/${id}/resume`, payload, onEvent),
   stop: (id) => j(`/stories/${id}/stop`, { method: "POST" }),

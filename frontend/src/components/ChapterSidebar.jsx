@@ -1,15 +1,26 @@
+import { useState } from 'react'
 import { Card, Flex, ScrollArea, Separator, Text, Badge, Tooltip } from '@radix-ui/themes'
 import {
-  CheckCircleIcon, BookOpenTextIcon, NotebookIcon, PathIcon,
+  CheckCircleIcon, BookOpenTextIcon, DownloadSimpleIcon, NotebookIcon, PathIcon,
 } from '@phosphor-icons/react'
+import { api } from '../api.js'
 import { useApp } from '../App.jsx'
 
-/* 左栏:章节目录(定稿✓)+ 设定集/阅读入口 + 伏笔概览 */
+/* 左栏:章节目录(定稿✓)+ 设定集/阅读/导出入口 + 伏笔概览 */
 export default function ChapterSidebar({ detail, storyId, onOpenCodex, onOpenReader }) {
   const { t } = useApp()
+  const [exporting, setExporting] = useState(false)
   const chapters = detail?.chapters || []
   const threads = detail?.plot_threads || []
   const openThreads = threads.filter(x => x.status === 'open').length
+
+  const onExport = async () => {
+    if (exporting) return
+    setExporting(true)
+    try { await api.exportTxt(storyId, detail?.story?.title) }
+    catch (e) { console.warn('[export] 导出失败', e) }
+    finally { setExporting(false) }
+  }
 
   return (
     <Card size="2" className="panel-anim" style={{
@@ -56,6 +67,18 @@ export default function ChapterSidebar({ detail, storyId, onOpenCodex, onOpenRea
               style={{ borderRadius: 8, cursor: 'pointer' }} onClick={onOpenReader}>
               <BookOpenTextIcon size={15} />
               <Text size="2" weight="medium">阅读模式</Text>
+            </Flex>
+          </Tooltip>
+          <Tooltip content={chapters.length ? '全本章节合并为一个 txt' : '尚无定稿章节'} side="right">
+            <Flex gap="2" align="center" px="2" py="2" className="proc-row"
+              style={{
+                borderRadius: 8,
+                cursor: chapters.length ? 'pointer' : 'not-allowed',
+                opacity: chapters.length ? 1 : 0.5,
+              }}
+              onClick={chapters.length ? onExport : undefined}>
+              <DownloadSimpleIcon size={15} color={exporting ? 'var(--accent-9)' : undefined} />
+              <Text size="2" weight="medium">导出 TXT</Text>
             </Flex>
           </Tooltip>
         </Flex>

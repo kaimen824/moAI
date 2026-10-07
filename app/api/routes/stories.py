@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
@@ -203,6 +205,26 @@ def get_chapter(story_id: str, chapter_no: int,
     if not row:
         raise HTTPException(404, "chapter not found")
     return dict(row)
+
+
+@router.get("/stories/{story_id}/export")
+@locked
+def export_story(story_id: str, user: AuthUser = Depends(get_current_user)):
+    """全文导出 TXT:active 章节按序拼接;权限口径同章节读(成员可导)。"""
+    deps, _ = engine()
+    require_story(deps.conn, story_id, user)
+    q = StoryQueries(deps.conn)
+    if q.story_row(story_id) is None:
+        raise HTTPException(404, "story not found")
+    try:
+        title, text = q.export_text(story_id)
+    except LookupError:
+        raise HTTPException(404, "no chapters to export yet")
+    fname = quote(f"{title}.txt")                    # RFC 5987:中文书名文件头
+    return PlainTextResponse(
+        text, media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''{fname}"})
 
 
 @router.get("/stories/{story_id}/codex")

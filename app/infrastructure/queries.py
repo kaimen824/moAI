@@ -65,6 +65,21 @@ class StoryQueries:
             "SELECT * FROM chapters WHERE story_id=? AND chapter_no=? AND status='active'",
             (story_id, chapter_no)).fetchone()
 
+    def export_text(self, story_id: str) -> tuple[str, str]:
+        """全文导出:书名 + active 章节按 chapter_no 序拼(标题+正文)。"""
+        story = self.story_row(story_id)
+        if not story:
+            raise LookupError(story_id)
+        rows = self.conn.execute(
+            "SELECT title, content FROM chapters"
+            " WHERE story_id=? AND status='active' ORDER BY chapter_no", (story_id,)).fetchall()
+        if not rows:
+            raise LookupError(f"no active chapters: {story_id}")
+        parts = [story["title"]]
+        for r in rows:
+            parts.append(f"\n\n{r['title'] or ''}\n\n{r['content'] or ''}")
+        return story["title"], "".join(parts)
+
     def codex(self, story_id: str, branch: str) -> dict:
         """设定集(Codex):角色卡 + 伏笔台账 + 当前有效世界记忆(排除被推翻/拒绝)。
 
