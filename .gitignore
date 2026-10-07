@@ -22,6 +22,20 @@ dist/
 .vscode/
 .env.example
 
-# LangGraph Studio 运行时产物 / 生成文本导出(不入库)
+# LangGraph Studio 运行时产物 / 生成文本导出(根目录产物不入库;evals/reports 仍跟踪)
 .langgraph_api/
-从培训班开始_第1-10章.txt
+/*.txt
+
+# ArcReel
+.arcreel/
+
+# ArcReel 产物预览(大文件)
+arcreel_preview/
+
+# 本机 Agent 工具链配置(ArcReel skills / Claude 本地设置,非项目本体)
+.agents/
+.claude/
+skills-lock.json
+
+# 一次性调试残留
+sp1_tmp.json
