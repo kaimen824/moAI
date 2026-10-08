@@ -2,7 +2,7 @@
 
 基于 LangGraph 的多 Agent 小说合写系统:Agent 注册表 16 项(规划/写作/评审/抽取/摘要/伏笔治理)、11 级模型路由角色分工协作,在 60 章量级合成世界的实测中维持设定一致、伏笔可追踪、角色视角严格隔离的长篇叙事。
 
-> 完整设计(ADR 决策记录编号至 ADR-0028 + trade-off 论证)见 [DESIGN_FINAL.md](DESIGN_FINAL.md) · 决策过程见 [PROJECT_DESIGN.md](PROJECT_DESIGN.md) · 公网部署见 [docs/DEPLOY.md](docs/DEPLOY.md) · 版本更新见 [CHANGELOG.md](CHANGELOG.md)
+> 完整设计(ADR 决策记录编号至 ADR-0042 + trade-off 论证)见 [DESIGN_FINAL.md](DESIGN_FINAL.md) · 书籍导入与状态重建设计见 [docs/BOOK_IMPORT_DESIGN.md](docs/BOOK_IMPORT_DESIGN.md)(设计态) · 公网部署见 [docs/DEPLOY.md](docs/DEPLOY.md) · 版本更新见 [CHANGELOG.md](CHANGELOG.md)
 
 ## 核心特性
 
@@ -13,9 +13,10 @@
 | **混合检索** | 结构化查表主路 + 实体链接扩展 + 向量兜底;远距离召回 100%(naive 为 0%),10-60 章实测不衰减 |
 | **双评审闭环** | 大纲一致性 + 质量审校并行评审,自动重写循环(上限可配),LLM 输出 schema 硬校验+失败安全降级(绝不静默 pass) |
 | **human-in-the-loop** | 三类中断点:总大纲确认 / 阶段细纲确认 / 章节审阅+伏笔人工复核;中断卡持久化,刷新/重启不丢 |
+| **对话工作台** | ChatDock(ADR-0031):ReAct 独占节点,查询/指令/停止工具 + JSONL 决策链;revamp_chapter 对话式重构历史章节 |
 | **认证与多租户** | JWT 双 token(access 2h + refresh 7d 滑动续期,ADR-0029)+ 管理员开户 + story_members 租户隔离(ADR-0022);同一 story 单 active run 互斥(ADR-0023) |
 | **成本工程** | 按 Agent 分级路由(强/中/便宜),全链路 usage 埋点按用户/run 归因,每日 token 预算闸门(story/全局) |
-| **可插拔架构** | 单向依赖规则(import-linter 进 CI)+ Agent 注册表 + 插件契约 |
+| **可插拔架构** | 单向依赖规则(import-linter 分层契约机械化保障)+ Agent 注册表 + 插件契约 |
 
 ## 架构
 
@@ -50,7 +51,7 @@ cd frontend && npm install && npm run dev
 ## 测试与评测
 
 ```bash
-pytest                          # 140 项测试(记忆/权限/版本链/图端到端/API/认证/LLM 契约/数据完整性/运行状态/可观测性/并发集成)
+pytest                          # 191 项测试(记忆/权限/版本链/图端到端/API/认证/LLM 契约/数据完整性/运行状态/可观测性/并发集成/导出)
 lint-imports                    # 分层架构契约(机械化守护)
 
 python -m evals.run_memory_eval         # P2.5:记忆层基线对比(零 token)
